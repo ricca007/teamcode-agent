@@ -11,6 +11,7 @@ from app.schemas.planning import (
 TASK_PATH_PREFIXES = {
     "user": "backend/app/modules/user",
     "product": "backend/app/modules/product",
+    "coupon": "backend/app/modules/coupon",
     "order": "backend/app/modules/order",
     "interface": "backend/app/interface_registry",
     "agent": "backend/app/manager_agent",
@@ -19,8 +20,8 @@ TASK_PATH_PREFIXES = {
 }
 
 DEPENDENCY_RULES = {
-    "order": ("user", "product"),
-    "frontend": ("user", "product", "order", "interface"),
+    "order": ("user", "product", "coupon"),
+    "frontend": ("user", "product", "coupon", "order", "interface"),
     "agent": ("interface",),
 }
 
@@ -34,6 +35,7 @@ def decompose_tasks(
     for module in ordered_modules(grouped)[:max_tasks]:
         label = MODULE_LABELS.get(module, module.title())
         slug = _slug(module)
+        allowed_path = TASK_PATH_PREFIXES.get(module, f"backend/app/modules/{slug}")
         tasks.append(
             PlannedTask(
                 task_id=f"task_{slug}",
@@ -42,7 +44,7 @@ def decompose_tasks(
                 title=f"Implement the {label.lower()} module",
                 description=" ".join(grouped[module]),
                 owner_id="",
-                allowed_paths=[f"{TASK_PATH_PREFIXES.get(module, 'backend/app')}/{slug}/"],
+                allowed_paths=[f"{allowed_path.rstrip('/')}/"],
                 interface_requirements=[],
                 acceptance_criteria=[
                     f"{label} behavior is covered by automated tests.",

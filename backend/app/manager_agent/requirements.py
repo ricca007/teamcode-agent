@@ -10,6 +10,10 @@ MODULE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("product", "catalog", "inventory", "item", "商品", "产品", "库存", "目录"),
     ),
     (
+        "coupon",
+        ("coupon", "discount", "voucher", "优惠券", "折扣", "满减"),
+    ),
+    (
         "order",
         ("order", "checkout", "cart", "payment", "订单", "购物车", "结算", "支付"),
     ),
@@ -27,11 +31,21 @@ MODULE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
 )
 
-MODULE_ORDER = ("user", "product", "order", "interface", "agent", "frontend", "core")
+MODULE_ORDER = (
+    "user",
+    "product",
+    "coupon",
+    "order",
+    "interface",
+    "agent",
+    "frontend",
+    "core",
+)
 
 MODULE_LABELS = {
     "user": "User",
     "product": "Product",
+    "coupon": "Coupon",
     "order": "Order",
     "interface": "Interface",
     "agent": "Agent",

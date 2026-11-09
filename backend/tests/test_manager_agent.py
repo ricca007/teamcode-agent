@@ -52,6 +52,10 @@ def test_create_plan_builds_online_store_tasks(tmp_path: Path) -> None:
     assert all(task.interface_requirements for task in plan.tasks)
     assert len(plan.interface_contracts) == 3
     assert plan.repository.modules[0].classes == ["Product"]
+    user_contract = next(
+        contract for contract in plan.interface_contracts if contract.module == "user"
+    )
+    assert user_contract.file_path == "backend/app/modules/user/user_service.py"
 
 
 def test_create_plan_is_deterministic(tmp_path: Path) -> None:
