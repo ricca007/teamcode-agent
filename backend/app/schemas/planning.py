@@ -63,3 +63,47 @@ class PlanResult(BaseModel):
     repository: RepositorySnapshot
     tasks: list[PlannedTask]
     interface_contracts: list[InterfaceContractDraft]
+
+
+class TaskFieldChange(BaseModel):
+    task_id: str
+    changed_fields: list[str]
+
+
+class TaskDependencyChange(BaseModel):
+    task_id: str
+    before: list[str] = Field(default_factory=list)
+    after: list[str] = Field(default_factory=list)
+
+
+class InterfaceContractChange(BaseModel):
+    interface_id: str
+    change_type: Literal["added", "removed", "updated"]
+    before: InterfaceContractDraft | None = None
+    after: InterfaceContractDraft | None = None
+
+
+class PlanDiff(BaseModel):
+    added_tasks: list[str] = Field(default_factory=list)
+    removed_tasks: list[str] = Field(default_factory=list)
+    updated_tasks: list[TaskFieldChange] = Field(default_factory=list)
+    unchanged_tasks: list[str] = Field(default_factory=list)
+    dependency_changes: list[TaskDependencyChange] = Field(default_factory=list)
+    interface_changes: list[InterfaceContractChange] = Field(default_factory=list)
+    impact_notes: list[str] = Field(default_factory=list)
+
+    @property
+    def has_changes(self) -> bool:
+        return bool(
+            self.added_tasks
+            or self.removed_tasks
+            or self.updated_tasks
+            or self.dependency_changes
+            or self.interface_changes
+        )
+
+
+class ReplanResult(BaseModel):
+    previous_version: int
+    plan: PlanResult
+    diff: PlanDiff
