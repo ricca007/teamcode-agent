@@ -1,8 +1,11 @@
 from app.schemas.core import (
+    AgentLog,
     AgentLogRead,
     AgentStatus,
     ChangeSet,
     CodeChangeRead,
+    ExecutionResult,
+    GitWorkspace,
     InterfaceInfo,
     ParamInfo,
     ProjectCreate,
@@ -17,6 +20,7 @@ from app.schemas.core import (
     UserCreate,
     UserRead,
     UserRole,
+    task_prompt,
 )
 from app.schemas.planning import (
     InterfaceContractChange,
@@ -34,12 +38,15 @@ from app.schemas.planning import (
 )
 
 __all__ = [
+    "AgentLog",
     "AgentLogRead",
     "AgentStatus",
     "ChangeSet",
     "CodeChangeRead",
+    "ExecutionResult",
     "InterfaceContractChange",
     "InterfaceContractDraft",
+    "GitWorkspace",
     "InterfaceInfo",
     "ParamInfo",
     "PlanDiff",
@@ -64,4 +71,5 @@ __all__ = [
     "UserCreate",
     "UserRead",
     "UserRole",
+    "task_prompt",
 ]
