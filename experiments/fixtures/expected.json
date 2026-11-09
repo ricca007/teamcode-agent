@@ -1,0 +1,79 @@
+[
+  {
+    "module": "users",
+    "name": "UserRepository",
+    "kind": "class",
+    "returns": null,
+    "params": []
+  },
+  {
+    "module": "users",
+    "name": "UserRepository.find",
+    "kind": "method",
+    "returns": "dict | None",
+    "params": ["user_id"]
+  },
+  {
+    "module": "users",
+    "name": "get_user",
+    "kind": "function",
+    "returns": "dict",
+    "params": ["user_id", "include_deleted"]
+  },
+  {
+    "module": "users",
+    "name": "normalize_email",
+    "kind": "function",
+    "returns": "str",
+    "params": ["email"]
+  },
+  {
+    "module": "users",
+    "name": "UserService",
+    "kind": "class",
+    "returns": null,
+    "params": ["repo", "retries"]
+  },
+  {
+    "module": "users",
+    "name": "UserService.create",
+    "kind": "method",
+    "returns": "dict",
+    "params": ["email", "password", "role"]
+  },
+  {
+    "module": "products",
+    "name": "ProductService",
+    "kind": "class",
+    "returns": null,
+    "params": ["repo"]
+  },
+  {
+    "module": "products",
+    "name": "ProductService.adjust_stock",
+    "kind": "method",
+    "returns": "int",
+    "params": ["sku", "delta"]
+  },
+  {
+    "module": "products",
+    "name": "list_products",
+    "kind": "function",
+    "returns": "list[dict]",
+    "params": ["category", "limit"]
+  },
+  {
+    "module": "orders",
+    "name": "OrderService",
+    "kind": "class",
+    "returns": null,
+    "params": ["user_service"]
+  },
+  {
+    "module": "orders",
+    "name": "OrderService.create_order",
+    "kind": "method",
+    "returns": "dict",
+    "params": ["user_id", "items", "coupon_code"]
+  }
+]

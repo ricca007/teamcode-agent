@@ -1,0 +1,125 @@
+{
+  "accuracy": {
+    "expected": 11,
+    "extracted": 11,
+    "matched": 11,
+    "missing": [],
+    "extra": [],
+    "field_accuracy": 1.0,
+    "doc_coverage": 1.0,
+    "rows": [
+      {
+        "name": "orders.OrderService",
+        "module": true,
+        "kind": true,
+        "returns": true,
+        "params": true
+      },
+      {
+        "name": "orders.OrderService.create_order",
+        "module": true,
+        "kind": true,
+        "returns": true,
+        "params": true
+      },
+      {
+        "name": "products.ProductService",
+        "module": true,
+        "kind": true,
+        "returns": true,
+        "params": true
+      },
+      {
+        "name": "products.ProductService.adjust_stock",
+        "module": true,
+        "kind": true,
+        "returns": true,
+        "params": true
+      },
+      {
+        "name": "products.list_products",
+        "module": true,
+        "kind": true,
+        "returns": true,
+        "params": true
+      },
+      {
+        "name": "users.UserRepository",
+        "module": true,
+        "kind": true,
+        "returns": true,
+        "params": true
+      },
+      {
+        "name": "users.UserRepository.find",
+        "module": true,
+        "kind": true,
+        "returns": true,
+        "params": true
+      },
+      {
+        "name": "users.UserService",
+        "module": true,
+        "kind": true,
+        "returns": true,
+        "params": true
+      },
+      {
+        "name": "users.UserService.create",
+        "module": true,
+        "kind": true,
+        "returns": true,
+        "params": true
+      },
+      {
+        "name": "users.get_user",
+        "module": true,
+        "kind": true,
+        "returns": true,
+        "params": true
+      },
+      {
+        "name": "users.normalize_email",
+        "module": true,
+        "kind": true,
+        "returns": true,
+        "params": true
+      }
+    ],
+    "warnings": []
+  },
+  "latency": {
+    "full_avg_ms": 1.0208056773990393,
+    "full_runs_ms": [
+      1.0580829111859202,
+      1.018917071633041,
+      0.9854170493781567
+    ],
+    "incremental_ms": 0.2929999027401209,
+    "incremental_scanned": 0,
+    "incremental_skipped": 3
+  },
+  "registry": {
+    "first_added": 11,
+    "unchanged_has_changes": false,
+    "updated_count": 1,
+    "version_after_update": 2,
+    "snapshot_count": 2,
+    "soft_deleted": true,
+    "deleted_count": 2,
+    "deletion_snapshot_deleted": true,
+    "total_after_delete": 9,
+    "markdown_has_signature": true,
+    "markdown_has_usage_note": true
+  },
+  "realtime": {
+    "runs": 3,
+    "latencies_ms": [
+      114.02099998667836,
+      117.29916697368026,
+      122.1265000058338
+    ],
+    "avg_ms": 117.81555565539747,
+    "debounce_ms": 100.0
+  }
+}
