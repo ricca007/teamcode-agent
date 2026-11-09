@@ -20,6 +20,6 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
       - name: Lint
-        run: ruff check .
+        run: ruff check . ../experiments
       - name: Test
         run: pytest

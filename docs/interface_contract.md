@@ -142,3 +142,17 @@ result = replan(previous_plan, updated_request)
 added, removed, updated, and unchanged tasks, dependency changes, interface
 changes, and impact notes. Each replan increments the plan version and keeps
 existing task ownership when the member is still available.
+
+## Planning Evaluation
+
+Run the Experiment 1 and Experiment 4 evaluation from the repository root:
+
+```bash
+python experiments/eval_planning.py --format markdown
+python experiments/eval_planning.py --format json --output experiments/results/planning.json
+```
+
+The script exercises the online-store baseline and a coupon requirement change.
+It reports task, dependency, contract, assignment, replanning impact, owner
+stability, and elapsed-time metrics. A non-zero exit status signals an
+automated threshold failure.
