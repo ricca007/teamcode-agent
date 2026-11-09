@@ -1,4 +1,4 @@
-from app.schemas import AgentStatus, TaskSpec
+from app.schemas import AgentStatus, TaskRead, TaskSpec, TaskStatus
 
 
 def test_task_spec_defaults_to_no_dependencies() -> None:
@@ -18,3 +18,8 @@ def test_task_spec_defaults_to_no_dependencies() -> None:
 
 def test_agent_status_serializes_to_string_value() -> None:
     assert AgentStatus.RUNNING.value == "running"
+
+
+def test_task_read_supports_orm_attributes() -> None:
+    assert TaskRead.model_config.get("from_attributes") is True
+    assert TaskStatus.IN_PROGRESS.value == "in_progress"

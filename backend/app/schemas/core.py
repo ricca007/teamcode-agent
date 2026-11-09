@@ -2,7 +2,74 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class UserRole(StrEnum):
+    LEADER = "leader"
+    MEMBER = "member"
+
+
+class ProjectRole(StrEnum):
+    OWNER = "owner"
+    MEMBER = "member"
+
+
+class TaskStatus(StrEnum):
+    PLANNED = "planned"
+    IN_PROGRESS = "in_progress"
+    BLOCKED = "blocked"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+class AgentStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    PAUSED = "paused"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    TERMINATED = "terminated"
+
+
+class UserCreate(BaseModel):
+    name: str
+    email: str
+    role: UserRole = UserRole.MEMBER
+
+
+class UserRead(UserCreate):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProjectCreate(BaseModel):
+    name: str
+    repo_path: str
+
+
+class ProjectRead(ProjectCreate):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    owner_id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProjectMemberCreate(BaseModel):
+    user_id: str
+    role: ProjectRole = ProjectRole.MEMBER
+
+
+class ProjectMemberRead(ProjectMemberCreate):
+    model_config = ConfigDict(from_attributes=True)
+
+    project_id: str
+    created_at: datetime
 
 
 class TaskSpec(BaseModel):
@@ -15,6 +82,18 @@ class TaskSpec(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str]
     priority: int = 0
+
+
+class TaskRead(TaskSpec):
+    model_config = ConfigDict(from_attributes=True)
+
+    project_id: str
+    status: TaskStatus = TaskStatus.PLANNED
+    replan_version: int = 1
+    workspace_path: str | None = None
+    branch_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class ParamInfo(BaseModel):
@@ -38,16 +117,9 @@ class InterfaceInfo(BaseModel):
     dependencies: list[str] = Field(default_factory=list)
 
 
-class AgentStatus(StrEnum):
-    PENDING = "pending"
-    RUNNING = "running"
-    PAUSED = "paused"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    TERMINATED = "terminated"
-
-
 class SessionInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     session_id: str
     task_id: str
     adapter: str
@@ -60,3 +132,21 @@ class ChangeSet(BaseModel):
     files: list[str]
     diff: str
     commit_hash: str | None = None
+
+
+class AgentLogRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    session_id: str
+    ts: datetime
+    level: str
+    message: str
+
+
+class CodeChangeRead(ChangeSet):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    session_id: str
+    task_id: str
