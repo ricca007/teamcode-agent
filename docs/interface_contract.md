@@ -14,7 +14,9 @@ API, event, or data structure, and notify all affected owners.
 | GET | `/api/projects/{id}/tasks` | List project tasks | A |
 | POST | `/api/tasks/{id}/run` | Create a worktree and start an Agent | B |
 | POST | `/api/tasks/{id}/pause` | Pause an Agent | B |
+| POST | `/api/tasks/{id}/resume` | Resume an Agent | B |
 | POST | `/api/tasks/{id}/terminate` | Terminate an Agent | B |
+| POST | `/api/tasks/{id}/commit` | Commit authorized task changes | B |
 | GET | `/api/tasks/{id}/status` | Read session status | B |
 | GET | `/api/tasks/{id}/logs` | Read session logs | B |
 | GET | `/api/tasks/{id}/changes` | Read file changes and commits | B |
@@ -60,16 +62,21 @@ class CodingAgentAdapter(Protocol):
 
     async def get_status(self, session_id: str) -> "AgentStatus": ...
 
-    def stream_logs(self, session_id: str) -> AsyncIterator[str]: ...
+    def stream_logs(self, session_id: str) -> AsyncIterator["AgentLog"]: ...
 
     async def get_changes(self, session_id: str) -> "ChangeSet": ...
 
     async def pause(self, session_id: str) -> None: ...
 
+    async def resume(self, session_id: str) -> None: ...
+
     async def terminate(self, session_id: str) -> None: ...
 ```
 
-Core data structures are defined in `backend/app/schemas/core.py`.
+Core data structures are defined in `backend/app/schemas/core.py`. The runtime
+schema also defines `AgentLog`, `GitWorkspace`, `ExecutionResult`, and
+`task_prompt`; `TaskSpec` includes `base_branch`, and `SessionInfo` includes
+`ended_at`.
 
 ## Database Model
 
