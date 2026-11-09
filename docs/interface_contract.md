@@ -97,3 +97,32 @@ alembic upgrade head
 ```
 
 Docker Compose applies pending migrations before starting the API.
+
+## Manager Agent Planning
+
+The stable planning entry point is:
+
+```python
+from app.manager_agent import create_plan
+from app.schemas import PlanningRequest
+
+plan = create_plan(request)
+```
+
+`PlanningRequest` contains the project ID, natural-language requirements,
+repository path, member areas, and optional task limit. `PlanResult` contains
+normalized requirements, a repository snapshot, assigned tasks, and interface
+contract drafts.
+
+The LangGraph workflow has six ordered stages:
+
+1. `parse_requirements`
+2. `analyze_repository`
+3. `decompose_tasks`
+4. `infer_dependencies`
+5. `generate_contracts`
+6. `assign_tasks`
+
+The M0 implementation is deterministic and does not require an external model.
+Model-backed planning can replace individual node implementations without
+changing the graph or `create_plan()` contract.
