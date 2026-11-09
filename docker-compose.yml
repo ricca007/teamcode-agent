@@ -2,7 +2,9 @@ services:
   api:
     build:
       context: ./backend
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: >
+      sh -c "alembic upgrade head &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://teamcode:teamcode@db:5432/teamcode}
     ports:

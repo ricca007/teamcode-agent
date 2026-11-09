@@ -70,3 +70,30 @@ class CodingAgentAdapter(Protocol):
 ```
 
 Core data structures are defined in `backend/app/schemas/core.py`.
+
+## Database Model
+
+The initial Alembic migration creates these tables:
+
+| Table | Purpose |
+| --- | --- |
+| `users` | Platform users and their global roles |
+| `projects` | Project metadata and owning repository path |
+| `project_members` | Per-project member roles |
+| `tasks` | Development tasks, allowed paths, and workspace state |
+| `task_dependencies` | Directed task dependency edges |
+| `agent_sessions` | Coding Agent execution sessions |
+| `agent_logs` | Ordered session log records |
+| `code_changes` | Captured diffs and commit metadata |
+| `interface_contracts` | Versioned Python interface records |
+
+Status and role values are stored using their lowercase public values, for
+example `in_progress` and `member`.
+
+Run migrations from `backend/`:
+
+```bash
+alembic upgrade head
+```
+
+Docker Compose applies pending migrations before starting the API.
