@@ -126,3 +126,19 @@ The LangGraph workflow has six ordered stages:
 The M0 implementation is deterministic and does not require an external model.
 Model-backed planning can replace individual node implementations without
 changing the graph or `create_plan()` contract.
+
+### Incremental Replanning
+
+Use `replan()` with the previous `PlanResult` and a complete updated planning
+request:
+
+```python
+from app.manager_agent import replan
+
+result = replan(previous_plan, updated_request)
+```
+
+`ReplanResult` contains the new plan and a structured `PlanDiff` covering
+added, removed, updated, and unchanged tasks, dependency changes, interface
+changes, and impact notes. Each replan increments the plan version and keeps
+existing task ownership when the member is still available.
