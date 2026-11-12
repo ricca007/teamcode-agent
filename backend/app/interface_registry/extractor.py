@@ -64,6 +64,7 @@ class ExtractedInterface:
     lineno: int
     decorators: list[str] = field(default_factory=list)
     is_async: bool = False
+    dependencies: list[str] = field(default_factory=list)
 
     def to_interface_info(
         self,
@@ -75,9 +76,7 @@ class ExtractedInterface:
     ) -> InterfaceInfo:
         """转换为对外契约模型。"""
         return InterfaceInfo(
-            interface_id=make_interface_id(
-                project_id, self.file_path, self.name, self.kind
-            ),
+            interface_id=make_interface_id(project_id, self.file_path, self.name, self.kind),
             project_id=project_id,
             module=self.module,
             file_path=self.file_path,
@@ -88,7 +87,7 @@ class ExtractedInterface:
             docstring=self.docstring,
             version=version,
             commit_hash=commit_hash,
-            dependencies=dependencies or [],
+            dependencies=self.dependencies if dependencies is None else dependencies,
             lineno=self.lineno,
             decorators=self.decorators,
             is_async=self.is_async,
@@ -133,9 +132,7 @@ def iter_python_files(
         for filename in sorted(filenames):
             if not filename.endswith(".py"):
                 continue
-            if not include_tests and (
-                filename.startswith("test_") or filename == "conftest.py"
-            ):
+            if not include_tests and (filename.startswith("test_") or filename == "conftest.py"):
                 continue
             yield Path(dirpath) / filename
 
@@ -194,22 +191,18 @@ def _build_params(node: ast.arguments, *, skip_receiver: bool = False) -> list[P
     defaults = list(node.defaults)
     offset = len(positional) - len(defaults)
 
-    if (
-        skip_receiver
-        and positional
-        and positional[0].arg in {"self", "cls"}
-    ):
-        positional = positional[1:]
-        # self/cls 通常没有默认值；若异常情况有，保守地放弃偏移
-        offset = max(offset - 1, 0)
-
     for index, arg in enumerate(positional):
+        if skip_receiver and index == 0 and arg.arg in {"self", "cls"}:
+            continue
         default = defaults[index - offset] if index >= offset else None
         params.append(
             ParamInfo(
                 name=arg.arg,
                 annotation=_annotation_to_str(arg.annotation),
                 default=_default_to_str(default),
+                kind="positional_only"
+                if index < len(node.posonlyargs)
+                else "positional_or_keyword",
             )
         )
 
@@ -218,6 +211,7 @@ def _build_params(node: ast.arguments, *, skip_receiver: bool = False) -> list[P
             ParamInfo(
                 name=f"*{node.vararg.arg}",
                 annotation=_annotation_to_str(node.vararg.annotation),
+                kind="var_positional",
             )
         )
 
@@ -227,6 +221,7 @@ def _build_params(node: ast.arguments, *, skip_receiver: bool = False) -> list[P
                 name=arg.arg,
                 annotation=_annotation_to_str(arg.annotation),
                 default=_default_to_str(default),
+                kind="keyword_only",
             )
         )
 
@@ -235,6 +230,7 @@ def _build_params(node: ast.arguments, *, skip_receiver: bool = False) -> list[P
             ParamInfo(
                 name=f"**{node.kwarg.arg}",
                 annotation=_annotation_to_str(node.kwarg.annotation),
+                kind="var_keyword",
             )
         )
 
@@ -252,12 +248,24 @@ def _class_init_params(node: ast.ClassDef) -> list[ParamInfo]:
 class _InterfaceVisitor(ast.NodeVisitor):
     """按作用域栈记录限定名与类型（function / method / class）。"""
 
-    def __init__(self, module: str, rel_path: str):
+    def __init__(self, module: str, rel_path: str, imports: dict[str, str] | None = None):
         self.module = module
         self.rel_path = rel_path
         # 栈元素：(名称, 作用域种类)
         self._stack: list[tuple[str, str]] = []
         self.items: list[ExtractedInterface] = []
+        self.imports = imports or {}
+
+    def _dependencies(self, node: ast.AST) -> list[str]:
+        dependencies = set()
+        for call in ast.walk(node):
+            if not isinstance(call, ast.Call):
+                continue
+            name = ast.unparse(call.func)
+            root, _, suffix = name.partition(".")
+            if root in self.imports:
+                dependencies.add(self.imports[root] + ("." + suffix if suffix else ""))
+        return sorted(dependencies)
 
     def _qualified_name(self, name: str) -> str:
         return ".".join([entry[0] for entry in self._stack] + [name])
@@ -278,6 +286,7 @@ class _InterfaceVisitor(ast.NodeVisitor):
                 lineno=node.lineno,
                 decorators=[_default_to_str(d) or "" for d in node.decorator_list],
                 is_async=False,
+                dependencies=self._dependencies(node),
             )
         )
         self._stack.append((node.name, "class"))
@@ -300,13 +309,21 @@ class _InterfaceVisitor(ast.NodeVisitor):
                 module=self.module,
                 file_path=self.rel_path,
                 params=_build_params(
-                    node.args, skip_receiver=(scope_kind == "class")
+                    node.args,
+                    skip_receiver=(
+                        scope_kind == "class"
+                        and not any(
+                            isinstance(d, ast.Name) and d.id == "staticmethod"
+                            for d in node.decorator_list
+                        )
+                    ),
                 ),
                 returns=_annotation_to_str(node.returns),
                 docstring=ast.get_docstring(node, clean=True),
                 lineno=node.lineno,
                 decorators=[_default_to_str(d) or "" for d in node.decorator_list],
                 is_async=is_async,
+                dependencies=self._dependencies(node),
             )
         )
         self._stack.append((node.name, "function"))
@@ -336,9 +353,26 @@ def extract_file(path: str | Path, project_root: str | Path) -> list[ExtractedIn
     except (SyntaxError, UnicodeDecodeError, ValueError) as exc:
         raise ExtractionError(f"{rel_path.as_posix()}: {exc}") from exc
 
+    imports = {}
+    package = module_name_for(rel_path.parent / "__init__.py")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imports[alias.asname or alias.name.split(".")[0]] = (
+                    alias.name if alias.asname else alias.name.split(".")[0]
+                )
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                prefix = package.split(".")[: len(package.split(".")) - node.level + 1]
+                base = ".".join([*prefix, base]).strip(".")
+            for alias in node.names:
+                if alias.name != "*":
+                    imports[alias.asname or alias.name] = f"{base}.{alias.name}".strip(".")
     visitor = _InterfaceVisitor(
         module=module_name_for(rel_path),
         rel_path=rel_path.as_posix(),
+        imports=imports,
     )
     visitor.visit(tree)
     # 类内部会重复访问方法：visitor 已经按栈去重，无需额外处理
@@ -375,11 +409,10 @@ def extract_project(
     scanned_files: list[str] = []
     skipped_files: list[str] = []
 
-    for path in iter_python_files(
-        root, include_tests=include_tests, extra_excludes=extra_excludes
-    ):
+    for path in iter_python_files(root, include_tests=include_tests, extra_excludes=extra_excludes):
         rel = path.resolve().relative_to(root).as_posix()
-        digest = sha256_file(path)
+        # 提取格式升级后重新解析旧缓存，避免旧记录永久缺少参数 kind。
+        digest = f"signature-v3:{sha256_file(path)}"
         file_hashes[rel] = digest
 
         if hash_cache is not None and hash_cache.get(rel) == digest:
@@ -395,9 +428,7 @@ def extract_project(
                 hash_cache.set(rel, digest)
             continue
 
-        interfaces.extend(
-            item.to_interface_info(project_id) for item in items
-        )
+        interfaces.extend(item.to_interface_info(project_id) for item in items)
         scanned_files.append(rel)
         if hash_cache is not None:
             hash_cache.set(rel, digest)

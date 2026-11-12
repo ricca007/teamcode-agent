@@ -29,6 +29,7 @@ async def project_socket(
     token: str | None = Query(default=None),
 ) -> None:
     allowed_tasks: set[str] | None = None
+    member_id: str | None = None
     if auth_required():
         try:
             async with session_factory() as db:
@@ -61,6 +62,7 @@ async def project_socket(
                         else "member"
                     )
                 if role != "leader":
+                    member_id = record.user_id
                     allowed_tasks = set(
                         (
                             await db.scalars(
@@ -77,7 +79,7 @@ async def project_socket(
             return
 
     try:
-        await manager.connect(project_id, websocket, allowed_tasks)
+        await manager.connect(project_id, websocket, allowed_tasks, user_id=member_id)
         # 事件总线绑定当前事件循环：watcher 线程发布事件时据此跨线程广播
         bus.bind_loop(asyncio.get_running_loop())
         logger.info("WebSocket 已连接: project=%s", project_id)

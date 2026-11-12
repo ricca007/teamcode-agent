@@ -79,9 +79,7 @@ async def _require_member(
     if actor is None:
         return _error(401, "actor_required", "请先登录或使用 API Key")
     if actor.key_project_id and actor.key_project_id != project_id:
-        return _error(
-            403, "permission_denied", "该 API Key 仅限其他项目"
-        )
+        return _error(403, "permission_denied", "该 API Key 仅限其他项目")
     member = await db.get(
         ProjectMember,
         {"project_id": project_id, "user_id": actor.user_id},
@@ -112,9 +110,7 @@ def _start_watcher(
         factory = _session_factory(service)
         if factory is None:
             return
-        watcher_manager.start(
-            project_id, root, factory, include_tests=include_tests
-        )
+        watcher_manager.start(project_id, root, factory, include_tests=include_tests)
     except Exception:
         logger.exception("启动接口文件监听失败（降级为手动刷新）: project=%s", project_id)
 
@@ -127,8 +123,8 @@ def _start_watcher(
 async def list_interfaces(
     project_id: str,
     format: Literal["json", "markdown"] = "json",
-    actor: Actor | None = Depends(get_actor),  # noqa: B008
-    service: InterfaceRegistryService = Depends(_registry),  # noqa: B008
+    actor: Actor | None = Depends(get_actor),  # noqa: B008  # noqa: B008  # noqa: B008  # noqa: B008
+    service: InterfaceRegistryService = Depends(_registry),  # noqa: B008  # noqa: B008  # noqa: B008  # noqa: B008
 ):
     try:
         denied = await _require_member(project_id, actor, service.db)
@@ -142,11 +138,7 @@ async def list_interfaces(
             return _error(404, "project_not_found", f"项目不存在: {project_id}")
 
         # 顺带开启文件监听，避免依赖修改 A 的应用生命周期
-        if (
-            project is not None
-            and project.repo_path
-            and Path(project.repo_path).exists()
-        ):
+        if project is not None and project.repo_path and Path(project.repo_path).exists():
             _start_watcher(service, project_id, project.repo_path)
 
         if format == "markdown":
@@ -173,15 +165,13 @@ async def list_interfaces(
 )
 async def get_interface(
     interface_id: str,
-    actor: Actor | None = Depends(get_actor),  # noqa: B008
-    service: InterfaceRegistryService = Depends(_registry),  # noqa: B008
+    actor: Actor | None = Depends(get_actor),  # noqa: B008  # noqa: B008  # noqa: B008  # noqa: B008
+    service: InterfaceRegistryService = Depends(_registry),  # noqa: B008  # noqa: B008  # noqa: B008  # noqa: B008
 ):
     try:
         info = await service.get_interface(interface_id)
         if info is not None:
-            denied = await _require_member(
-                info.project_id, actor, service.db
-            )
+            denied = await _require_member(info.project_id, actor, service.db)
             if denied is not None:
                 return denied
     except Exception:
@@ -189,9 +179,7 @@ async def get_interface(
         return _error(500, "internal_error", "读取接口详情失败，请查看服务日志")
 
     if info is None:
-        return _error(
-            404, "interface_not_found", f"接口不存在或已删除: {interface_id}"
-        )
+        return _error(404, "interface_not_found", f"接口不存在或已删除: {interface_id}")
     return info
 
 
@@ -203,8 +191,8 @@ async def get_interface(
 async def refresh_interfaces(
     project_id: str,
     request: RefreshRequest | None = None,
-    actor: Actor | None = Depends(get_actor),  # noqa: B008
-    service: InterfaceRegistryService = Depends(_registry),  # noqa: B008
+    actor: Actor | None = Depends(get_actor),  # noqa: B008  # noqa: B008  # noqa: B008  # noqa: B008
+    service: InterfaceRegistryService = Depends(_registry),  # noqa: B008  # noqa: B008  # noqa: B008  # noqa: B008
 ) -> dict | JSONResponse:
     started = time.perf_counter()
     options = request or RefreshRequest()
@@ -223,9 +211,16 @@ async def refresh_interfaces(
                 "project_not_found",
                 f"项目不存在或未配置 repo_path: {project_id}",
             )
-        if not Path(root).exists():
+        if not Path(root).is_dir():
             logger.warning("接口刷新失败：目录不存在: project=%s root=%s", project_id, root)
             return _error(422, "project_root_missing", f"项目根目录不存在: {root}")
+
+        if (
+            auth_required()
+            and project
+            and Path(root).resolve() != Path(project.repo_path).resolve()
+        ):
+            return _error(403, "permission_denied", "只能扫描当前项目配置的仓库根目录")
 
         logger.info("开始接口刷新: project=%s root=%s", project_id, root)
         summary = await service.scan(
@@ -281,3 +276,77 @@ async def refresh_interfaces(
 async def interfaces_health() -> dict:
     """C 的降级状态通过独立路径暴露，不改动 A 的 /health 契约。"""
     return watcher_manager.status()
+
+
+@router.get("/api/interfaces/{interface_id}/versions")
+async def interface_versions(
+    interface_id: str,
+    actor: Actor | None = Depends(get_actor),  # noqa: B008  # noqa: B008  # noqa: B008
+    service: InterfaceRegistryService = Depends(_registry),  # noqa: B008  # noqa: B008  # noqa: B008
+):
+    from app.models.interface import InterfaceContract
+
+    contract = await service.db.get(InterfaceContract, interface_id)
+    if contract is None:
+        return _error(404, "interface_not_found", "接口不存在")
+    denied = await _require_member(contract.project_id, actor, service.db)
+    if denied is not None:
+        return denied
+    return {"versions": await service.list_versions(interface_id)}
+
+
+@router.get("/api/projects/{project_id}/documentation")
+async def read_documentation(
+    project_id: str,
+    actor: Actor | None = Depends(get_actor),  # noqa: B008  # noqa: B008  # noqa: B008
+    service: InterfaceRegistryService = Depends(_registry),  # noqa: B008  # noqa: B008  # noqa: B008
+):
+    from app.integration.models import ProjectDocument
+    from app.interface_registry.documentation import configured, revision
+
+    denied = await _require_member(project_id, actor, service.db)
+    if denied is not None:
+        return denied
+    row = await service.db.get(ProjectDocument, project_id)
+    current = revision(await service.list_interfaces(project_id))
+    return {
+        "configured": configured(),
+        "document": row.data if row else None,
+        "stale": bool(row and row.data["revision"] != current),
+    }
+
+
+@router.post("/api/projects/{project_id}/documentation")
+async def generate_documentation(
+    project_id: str,
+    actor: Actor | None = Depends(get_actor),  # noqa: B008  # noqa: B008  # noqa: B008
+    service: InterfaceRegistryService = Depends(_registry),  # noqa: B008  # noqa: B008  # noqa: B008
+):
+    from sqlalchemy import select
+
+    from app.interface_registry.documentation import configured, generate
+    from app.interface_registry.models import InterfaceVersion
+
+    denied = await _require_member(project_id, actor, service.db)
+    if denied is not None:
+        return denied
+    if not configured():
+        return _error(409, "model_not_configured", "请配置模型地址、模型名称和 API Key 后生成说明")
+    history = (
+        await service.db.scalars(
+            select(InterfaceVersion)
+            .where(InterfaceVersion.project_id == project_id)
+            .order_by(InterfaceVersion.version_id)
+        )
+    ).all()
+    try:
+        result = await generate(
+            service.db,
+            project_id,
+            await service.list_interfaces(project_id),
+            [row.snapshot for row in history],
+        )
+    except Exception:
+        logger.exception("生成 Agent 语义说明失败: project=%s", project_id)
+        return _error(502, "model_error", "模型服务调用失败，请查看后端日志")
+    return result

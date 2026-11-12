@@ -61,13 +61,16 @@ class _PythonChangeHandler(FileSystemEventHandler):
     def _handle(self, event: FileSystemEvent) -> None:
         if event.is_directory:
             return
-        path = Path(event.src_path)
-        if path.suffix != ".py":
-            return
-        try:
-            self._watcher.notify(path)
-        except Exception:
-            logger.exception("处理文件变更事件失败: %s", path)
+        # 编辑器常把临时文件原子重命名为 .py；移动的两端都可能影响接口。
+        paths = {event.src_path, getattr(event, "dest_path", "")}
+        for raw_path in paths:
+            path = Path(raw_path)
+            if not raw_path or path.suffix != ".py":
+                continue
+            try:
+                self._watcher.notify(path)
+            except Exception:
+                logger.exception("处理文件变更事件失败: %s", path)
 
 
 class InterfaceWatcher:
@@ -111,16 +114,12 @@ class InterfaceWatcher:
                 "watchdog 未安装，接口变更不会自动推送，"
                 "只能手动调用 POST /api/projects/{id}/interfaces/refresh"
             )
-            logger.warning(
-                "[降级] %s（project=%s）", self.degradation_reason, self.project_id
-            )
+            logger.warning("[降级] %s（project=%s）", self.degradation_reason, self.project_id)
             return self
 
         try:
             observer = Observer()
-            observer.schedule(
-                _PythonChangeHandler(self), str(self.root), recursive=True
-            )
+            observer.schedule(_PythonChangeHandler(self), str(self.root), recursive=True)
             observer.start()
         except Exception as exc:  # pragma: no cover - 系统级监听失败
             self.degraded = True
@@ -169,9 +168,7 @@ class InterfaceWatcher:
                 self._timer = timer
                 timer.start()
         except Exception:
-            logger.exception(
-                "安排接口重扫失败: project=%s path=%s", self.project_id, path
-            )
+            logger.exception("安排接口重扫失败: project=%s path=%s", self.project_id, path)
 
     def _is_ignored(self, path: Path) -> bool:
         try:
@@ -234,9 +231,7 @@ class WatcherManager:
             except RuntimeError:
                 # 同步上下文（如 CLI）无法自动取到循环；需要调用方显式 bind
                 self._loop = None
-                logger.warning(
-                    "监听器未绑定事件循环，自动扫描会被丢弃: project=%s", project_id
-                )
+                logger.warning("监听器未绑定事件循环，自动扫描会被丢弃: project=%s", project_id)
 
         with self._lock:
             existing = self._watchers.get(project_id)
@@ -260,9 +255,7 @@ class WatcherManager:
                 return None
 
             if watcher.degraded:
-                self._degraded_reasons[project_id] = (
-                    watcher.degradation_reason or "文件监听不可用"
-                )
+                self._degraded_reasons[project_id] = watcher.degradation_reason or "文件监听不可用"
                 logger.warning(
                     "[降级] project=%s 文件监听不可用，后续只能手动刷新接口",
                     project_id,
@@ -284,9 +277,7 @@ class WatcherManager:
             )
             return None
         try:
-            return asyncio.run_coroutine_threadsafe(
-                self._scan_and_publish(project_id), loop
-            )
+            return asyncio.run_coroutine_threadsafe(self._scan_and_publish(project_id), loop)
         except Exception:
             logger.exception("调度接口扫描失败: project=%s", project_id)
             return None
@@ -358,9 +349,7 @@ class WatcherManager:
             try:
                 watcher.stop()
             except Exception:
-                logger.exception(
-                    "停止接口监听失败: project=%s", watcher.project_id
-                )
+                logger.exception("停止接口监听失败: project=%s", watcher.project_id)
 
     def is_running(self, project_id: str) -> bool:
         return project_id in self._watchers
@@ -374,9 +363,7 @@ class WatcherManager:
         reasons: list[str] = []
         if not WATCHDOG_AVAILABLE:
             reasons.append("watchdog 未安装，接口变更只能手动刷新")
-        reasons.extend(
-            f"{project_id}: {reason}" for project_id, reason in sorted(degraded.items())
-        )
+        reasons.extend(f"{project_id}: {reason}" for project_id, reason in sorted(degraded.items()))
         return {
             "available": WATCHDOG_AVAILABLE,
             "watching": watching,

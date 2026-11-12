@@ -30,5 +30,20 @@ coverage/
 # Runtime artifacts
 *.log
 *.sqlite3
+*.sqlite
+*.db
+*.db-shm
+*.db-wal
 tasks/
 worktrees/
+.mvp/
+mvp.env
+
+# Generated screenshots and evaluation outputs
+/docs/assets/
+/docs/*-evaluation.json
+/docs/real-agent-verification.json
+/docs/source-comparison.json
+/docs/verification.json
+/experiments/reports/
+/experiments/results/

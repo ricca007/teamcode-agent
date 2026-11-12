@@ -7,13 +7,7 @@ name = "teamcode-agent-cli"
 version = "0.1.0"
 description = "TeamCode Agent CLI（C-3：拉取接口文档 / MCP server）"
 requires-python = ">=3.12"
-dependencies = [
-  "aiosqlite>=0.20,<1",
-  "asyncpg>=0.30,<1",
-  "pydantic>=2.6,<3",
-  "pydantic-settings>=2.6,<3",
-  "sqlalchemy[asyncio]>=2.0,<3",
-]
+dependencies = []
 
 [project.optional-dependencies]
 watch = ["watchdog>=4.0,<7.0"]
@@ -30,20 +24,7 @@ dev = [
 teamcode = "cli.teamcode:main"
 
 [tool.setuptools]
-packages = [
-  "cli",
-  "app",
-  "app.agent_runtime",
-  "app.api",
-  "app.git_ops",
-  "app.interface_registry",
-  "app.manager_agent",
-  "app.models",
-  "app.realtime",
-  "app.schemas",
-  "app.security",
-]
+packages = ["cli"]
 
 [tool.setuptools.package-dir]
 cli = "cli"
-app = "backend/app"

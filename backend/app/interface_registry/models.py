@@ -48,9 +48,7 @@ class InterfaceState(InterfaceRegistryBase):
     project_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     # 仅包含签名/返回/docstring 的内容哈希，用于判断是否升版本
     content_hash: Mapped[str] = mapped_column(String(64), default="", nullable=False)
-    is_deleted: Mapped[bool] = mapped_column(
-        Boolean, default=False, index=True, nullable=False
-    )
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
     lineno: Mapped[int | None] = mapped_column(Integer)
     decorators: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     is_async: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
