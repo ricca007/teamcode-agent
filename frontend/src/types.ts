@@ -1,114 +1,33 @@
-/** 与 docs/interface_contract.md、backend/app/schemas/core.py 对齐的前端数据契约。 */
+export interface Member { user_id: string; name: string; role: "leader" | "member"; token?: string }
+export interface Task { task_id: string; title: string; description: string; owner_id: string;
+  status: string; allowed_paths: string[]; depends_on: string[]; workspace_path?: string;
+  branch_name?: string; acceptance_criteria: string[] }
+export interface Interface { interface_id: string; name: string; kind: string; module: string;
+  file_path: string; version: number; returns: string | null; docstring: string | null;
+  is_async: boolean; commit_hash: string | null; dependencies: string[];
+  params: { name: string; annotation: string | null; default: string | null; kind?: string }[] }
+export interface Version { version: number; snapshot: Interface & { is_deleted?: boolean }; created_at: string }
+export interface Log { message: string; level: string; ts?: string }
+export interface TestResult { status: string; output?: string; ts?: string; exit_code?: number }
+export interface Session { status: string; adapter?: string; session_id?: string; workspace?: string; error?: string }
+export interface Change { files: string[]; diff: string; commit_hash?: string }
+export interface Plan { version: number; plan: { tasks: unknown[] }; diff?: { impact_notes: string[];
+  added_tasks: string[]; updated_tasks: unknown[]; unchanged_tasks: string[] } | null }
+export interface Documentation { configured: boolean; stale: boolean;
+  document: { markdown: string; model: string; ts: string } | null }
 
-/** A 负责的任务状态（tasks.status）。 */
-export type TaskStatus =
-  | "planned"
-  | "in_progress"
-  | "blocked"
-  | "completed"
-  | "cancelled";
+export const labels: Record<string, string> = { planned: "待开始", in_progress: "进行中", completed: "已完成",
+  cancelled: "已取消", blocked: "待处理", pending: "未运行", running: "运行中", paused: "已暂停",
+  succeeded: "已完成", failed: "失败", terminated: "已终止", passed: "通过", timeout: "超时", not_run: "未运行" };
 
-/** B 负责的 Agent 会话状态（agent_sessions.status）。 */
-export type AgentStatus =
-  | "pending"
-  | "running"
-  | "paused"
-  | "succeeded"
-  | "failed"
-  | "terminated";
-
-export type LogLevel = "debug" | "info" | "warn" | "error";
-
-export interface Task {
-  task_id: string;
-  project_id: string;
-  title: string;
-  description: string;
-  owner_id: string;
-  owner_name?: string;
-  status: TaskStatus;
-  allowed_paths: string[];
-  interface_requirements?: string[];
-  acceptance_criteria?: string[];
-  depends_on: string[];
-  priority: number;
-  replan_version: number;
-  workspace_path?: string | null;
-  branch_name?: string | null;
+export function signature(info: Interface): string {
+  const parts: string[] = [];
+  let keyword = false;
+  info.params.forEach((p, i) => {
+    if (p.kind === "keyword_only" && !keyword) { parts.push("*"); keyword = true; }
+    if (p.name.startsWith("*")) keyword = true;
+    parts.push(p.name + (p.annotation ? `: ${p.annotation}` : "") + (p.default != null ? ` = ${p.default}` : ""));
+    if (p.kind === "positional_only" && info.params[i + 1]?.kind !== "positional_only") parts.push("/");
+  });
+  return `${info.kind === "class" ? "class" : info.is_async ? "async def" : "def"} ${info.name}(${parts.join(", ")})${info.returns ? ` -> ${info.returns}` : ""}`;
 }
-
-export interface ParamInfo {
-  name: string;
-  annotation: string | null;
-  default: string | null;
-}
-
-export interface InterfaceInfo {
-  interface_id: string;
-  project_id: string;
-  module: string;
-  file_path: string;
-  name: string;
-  kind: "function" | "method" | "class";
-  params: ParamInfo[];
-  returns: string | null;
-  docstring: string | null;
-  version: number;
-  commit_hash: string | null;
-  dependencies: string[];
-  lineno?: number | null;
-  decorators?: string[];
-  is_async?: boolean;
-}
-
-export interface InterfaceListResponse {
-  project_id: string;
-  generated_at: string;
-  count: number;
-  interfaces: InterfaceInfo[];
-}
-
-export interface AgentSession {
-  session_id: string;
-  task_id: string;
-  adapter: string;
-  status: AgentStatus;
-  workspace: string;
-  started_at: string;
-  ended_at?: string | null;
-}
-
-export interface LogEntry {
-  id: string;
-  session_id: string;
-  task_id: string;
-  ts: string;
-  level: LogLevel;
-  message: string;
-  sequence?: number;
-}
-
-export interface ChangeSet {
-  id: string;
-  task_id: string;
-  files: string[];
-  diff: string;
-  commit_hash: string | null;
-  ts: string;
-}
-
-export type WSEventType =
-  | "task.updated"
-  | "agent.log"
-  | "interface.updated"
-  | "code.changed";
-
-export interface WSEvent {
-  type: WSEventType;
-  project_id: string;
-  task_id: string | null;
-  payload: unknown;
-  ts: string;
-}
-
-export type ConnectionState = "connecting" | "open" | "closed";

@@ -44,8 +44,7 @@ logger = logging.getLogger(__name__)
 def interface_content_hash(info: InterfaceInfo) -> str:
     """接口「内容」哈希。
 
-    刻意排除 lineno / decorators / is_async 等展示字段：代码上下移动或
-    加装饰器不应被视为接口契约变更。只有签名、返回值和说明变化才升版本。
+    排除行号等位置字段；async 与装饰器可能改变调用方式，属于契约变化。
     """
     payload = {
         "module": info.module,
@@ -54,6 +53,9 @@ def interface_content_hash(info: InterfaceInfo) -> str:
         "params": [p.model_dump() for p in info.params],
         "returns": info.returns,
         "docstring": info.docstring,
+        "is_async": info.is_async,
+        "decorators": info.decorators,
+        "dependencies": info.dependencies,
     }
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -162,9 +164,7 @@ class InterfaceRegistryService:
                     continue
                 except Exception:
                     await self.db.rollback()
-                    logger.exception(
-                        "接口扫描失败: project=%s root=%s", project_id, project_root
-                    )
+                    logger.exception("接口扫描失败: project=%s root=%s", project_id, project_root)
                     raise
 
                 elapsed_ms = (time.perf_counter() - started) * 1000
@@ -179,6 +179,12 @@ class InterfaceRegistryService:
                     summary.total_interfaces,
                     elapsed_ms,
                 )
+                if summary.has_changes:
+                    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+                    from app.interface_registry.documentation import schedule
+
+                    schedule(project_id, async_sessionmaker(self.db.bind, expire_on_commit=False))
                 return summary
 
         raise RuntimeError("unreachable")  # pragma: no cover
@@ -198,18 +204,14 @@ class InterfaceRegistryService:
         contracts = list(
             (
                 await self.db.scalars(
-                    select(InterfaceContract).where(
-                        InterfaceContract.project_id == project_id
-                    )
+                    select(InterfaceContract).where(InterfaceContract.project_id == project_id)
                 )
             ).all()
         )
         states = list(
             (
                 await self.db.scalars(
-                    select(InterfaceState).where(
-                        InterfaceState.project_id == project_id
-                    )
+                    select(InterfaceState).where(InterfaceState.project_id == project_id)
                 )
             ).all()
         )
@@ -246,12 +248,9 @@ class InterfaceRegistryService:
             include_tests=include_tests,
             hash_cache=cache,
         )
-        cache.save()
 
         if result.warnings:
-            skipped = ", ".join(
-                warning.get("file", "?") for warning in result.warnings[:5]
-            )
+            skipped = ", ".join(warning.get("file", "?") for warning in result.warnings[:5])
             logger.warning(
                 "[降级] 项目 %s 有 %d 个 Python 文件解析失败，已跳过：%s",
                 project_id,
@@ -296,7 +295,9 @@ class InterfaceRegistryService:
                 summary.added.append(contract.id)
             else:
                 contract, state = pair
-                if state.is_deleted or state.content_hash != content_hash:
+                # 从持久化的契约重算，兼容旧哈希格式，避免升级时所有接口虚增版本。
+                previous_hash = interface_content_hash(self._to_info(contract, state))
+                if state.is_deleted or previous_hash != content_hash:
                     # 内容变化或从删除状态恢复：版本 +1
                     contract.version += 1
                     state.is_deleted = False
@@ -320,10 +321,7 @@ class InterfaceRegistryService:
             if full_scan:
                 stale = True
             else:
-                stale = (
-                    file_path in summary.scanned_files
-                    or file_path in summary.removed_files
-                )
+                stale = file_path in summary.scanned_files or file_path in summary.removed_files
             if not stale:
                 continue
             state.is_deleted = True
@@ -332,6 +330,13 @@ class InterfaceRegistryService:
             summary.deleted.append(contract.id)
 
         await self.db.commit()
+
+        # 缓存只记录已提交的结果；否则事务失败后重试会跳过尚未落库的文件。
+        try:
+            cache.save()
+        except OSError:
+            # 缓存只是优化，写入失败时下次重新解析，不能让已成功的事务报失败。
+            logger.warning("接口缓存保存失败，下次扫描将重新解析: %s", cache_path, exc_info=True)
 
         summary.total_interfaces = int(
             await self.db.scalar(
@@ -350,9 +355,7 @@ class InterfaceRegistryService:
         contracts = list(
             (
                 await self.db.scalars(
-                    select(InterfaceContract).where(
-                        InterfaceContract.project_id == project_id
-                    )
+                    select(InterfaceContract).where(InterfaceContract.project_id == project_id)
                 )
             ).all()
         )
@@ -360,9 +363,7 @@ class InterfaceRegistryService:
             state.interface_id: state
             for state in (
                 await self.db.scalars(
-                    select(InterfaceState).where(
-                        InterfaceState.project_id == project_id
-                    )
+                    select(InterfaceState).where(InterfaceState.project_id == project_id)
                 )
             ).all()
         }
@@ -414,7 +415,22 @@ class InterfaceRegistryService:
         ]
 
     async def render_markdown(self, project_id: str) -> str:
-        return render_markdown(project_id, await self.list_interfaces(project_id))
+        from app.integration.models import ProjectDocument
+
+        history = (
+            await self.db.scalars(
+                select(InterfaceVersion)
+                .where(InterfaceVersion.project_id == project_id)
+                .order_by(InterfaceVersion.version_id)
+            )
+        ).all()
+        document = await self.db.get(ProjectDocument, project_id)
+        return render_markdown(
+            project_id,
+            await self.list_interfaces(project_id),
+            history=[row.snapshot for row in history],
+            semantic=document.data if document else None,
+        )
 
     # ------------------------------------------------------------------
     # 内部工具
@@ -436,9 +452,7 @@ class InterfaceRegistryService:
             contract.commit_hash = commit_hash
 
     @staticmethod
-    def _apply_state(
-        state: InterfaceState, info: InterfaceInfo, content_hash: str
-    ) -> None:
+    def _apply_state(state: InterfaceState, info: InterfaceInfo, content_hash: str) -> None:
         state.content_hash = content_hash
         state.lineno = info.lineno
         state.decorators = list(info.decorators)
@@ -465,9 +479,7 @@ class InterfaceRegistryService:
         )
 
     @staticmethod
-    def _to_info(
-        contract: InterfaceContract, state: InterfaceState
-    ) -> InterfaceInfo:
+    def _to_info(contract: InterfaceContract, state: InterfaceState) -> InterfaceInfo:
         return InterfaceInfo(
             interface_id=contract.id,
             project_id=contract.project_id,

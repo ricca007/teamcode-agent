@@ -1,20 +1,15 @@
-# TeamCode Dashboard
+# Classroom workbench
 
-React + TypeScript 协作控制台，只连接真实后端（不再提供本地演示数据）。
+React + TypeScript + Vite. One page contains planning, ownership, Agent logs/diffs, actual pytest and interface history.
 
-## 开发
+From the repository root:
 
-```bash
-npm install
-npm run dev
+```powershell
+npm --prefix frontend ci
+npm --prefix frontend run build
+.\.venv\Scripts\python.exe scripts/run_mvp.py --port 8765
 ```
 
-Vite 会把 `/api` 与 `/ws` 代理到 `http://127.0.0.1:8000`（可用
-`VITE_BACKEND_HTTP` 覆盖）。侧栏可以切换项目 ID，默认读取
-`VITE_PROJECT_ID`（默认 `p_001`）。
+The backend serves `frontend/dist`. For development use `npm run dev` here; check `vite.config.ts` for the proxy target. `?demo=1` is a labelled read-only offline sample, excluded from experiments. Credentials use per-tab session storage; backend checks enforce permissions.
 
-## 构建
-
-```bash
-npm run build
-```
+Backend routes and data boundaries are documented in [the interface contract](../docs/interface_contract.md). Coursework reports are maintained outside this source repository.

@@ -1,0 +1,30 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.mvp
+    environment:
+      DATABASE_URL: postgresql+asyncpg://teamcode:teamcode@db:5432/teamcode
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - mvp_workspace:/app/.mvp
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: teamcode
+      POSTGRES_USER: teamcode
+      POSTGRES_PASSWORD: teamcode
+    volumes:
+      - mvp_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U teamcode -d teamcode"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+volumes:
+  mvp_workspace:
+  mvp_postgres:

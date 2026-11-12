@@ -1,5 +1,37 @@
 # Shared Interface Contract
 
+## Classroom MVP compatibility
+
+A/B source, shared models and application entry point are unchanged. C's MVP
+uses the existing planning functions and B's ExecutionService / adapters.
+Task IDs returned by A are namespaced per project in the C persistence adapter.
+
+The classroom runner seeds three members and issues project tokens. REST uses
+Bearer tokens; WebSocket uses `?token=...`. `/api/demo` exposes the classroom
+identities only when `TEAMCODE_DEMO=1`; it is a local presentation mode.
+Project creation requires an authenticated identity; the creator becomes owner.
+Member invitations, assignment, requirements and review require project ownership.
+
+Additive C endpoints:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/demo` | Local classroom identities and project |
+| GET | `/api/interfaces/{id}/versions` | History including deleted interfaces |
+| GET | `/api/projects/{id}/documentation` | Model explanation and configuration status |
+| POST | `/api/projects/{id}/documentation` | Generate semantic/module/change explanation |
+| GET/POST | `/api/tasks/{id}/tests` | Read/run actual pytest in the task worktree |
+
+Existing task/project/interface routes keep their paths and core response fields.
+Run requests accept `agent_name=mock` or a name in server-configured
+`TEAMCODE_AGENTS` JSON (for example `claude`). Prefer `prompt_mode=stdin`.
+C compensates for the current B adapter's missing argument-mode prompt append
+by adding the prompt to argv before constructing the adapter; B source is unchanged.
+No request accepts arbitrary shell commands. Missing model configuration is
+reported explicitly and is never replaced with fabricated model output.
+Markdown includes dependency names and version history; model notes include their
+source revision and become stale when the interface registry changes.
+
 This document is the initial M0 contract. Update it before changing a shared
 API, event, or data structure, and notify all affected owners.
 
@@ -26,6 +58,19 @@ API, event, or data structure, and notify all affected owners.
 | WS | `/ws/projects/{id}` | Receive project realtime events | C route owner |
 
 The interfaces endpoint supports `?format=json` and `?format=markdown`.
+
+### C compatibility fixes (2026-11-12)
+
+The shared A/B models and entry points stay unchanged. C's interface responses
+extend each parameter with optional `kind` (`positional_only`,
+`positional_or_keyword`, `var_positional`, `keyword_only`, `var_keyword`).
+Readers that ignore this additive field remain compatible; C uses it to preserve
+Python's `/` and `*` calling conventions in generated signatures. Legacy records
+default to `positional_or_keyword`.
+
+`is_async` and decorators participate in C's interface version comparison because
+they may change how callers invoke an interface. Line-number-only changes do not.
+Markdown downloads use the same Bearer authentication as JSON requests.
 
 ## Realtime Event Envelope
 

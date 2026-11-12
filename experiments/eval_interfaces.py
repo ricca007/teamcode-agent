@@ -125,6 +125,7 @@ def measure_latency() -> dict:
 async def _make_engine(db_path: Path):
     from sqlalchemy.ext.asyncio import create_async_engine
 
+    from app.integration.models import IntegrationBase
     from app.interface_registry.models import InterfaceRegistryBase
     from app.models import Base
 
@@ -132,6 +133,7 @@ async def _make_engine(db_path: Path):
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
         await connection.run_sync(InterfaceRegistryBase.metadata.create_all)
+        await connection.run_sync(IntegrationBase.metadata.create_all)
     return engine
 
 
