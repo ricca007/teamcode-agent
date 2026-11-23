@@ -23,10 +23,83 @@ import sys
 import tempfile
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_ALLOWED_TOOLS = "Read Glob Grep LS Write Edit Bash"
 DEFAULT_PERMISSION_MODE = "acceptEdits"
+
+
+@dataclass(frozen=True)
+class SandboxDecision:
+    """沙箱启用决策（纯函数结果，便于跨平台单测）。"""
+
+    mode: str  # "sandbox" | "disabled"
+    level: str = "info"  # "info" | "warn" | "error"
+    message: str | None = None
+
+    @property
+    def fatal(self) -> bool:
+        return self.level == "error"
+
+
+def _is_macos(platform: str) -> bool:
+    return platform.startswith("darwin") or platform.lower() == "macos"
+
+
+def _sandbox_decision(
+    platform: str,
+    no_sandbox: bool,
+    env_value: str | None,
+    has_sandbox_exec: bool,
+) -> SandboxDecision:
+    """决定是否启用 sandbox-exec 写隔离。
+
+    规则：
+    - ``--no-sandbox`` 或 ``TEAMCODE_SANDBOX=0``：明确关闭；
+    - 显式 ``TEAMCODE_SANDBOX=1`` 但当前平台无法启用：报错并 fail closed；
+    - 未设置：macOS 且有 sandbox-exec 时启用；其他情况大声警告后继续。
+    """
+    explicit = (env_value or "").strip().lower() or None
+    if no_sandbox or explicit == "0":
+        return SandboxDecision("disabled")
+
+    macos = _is_macos(platform)
+    available = macos and has_sandbox_exec
+
+    if explicit == "1":
+        if available:
+            return SandboxDecision(
+                "sandbox",
+                "info",
+                "[sandbox] 写操作限制在 Worktree 与专用临时目录",
+            )
+        return SandboxDecision(
+            "disabled",
+            "error",
+            "[sandbox] TEAMCODE_SANDBOX=1 显式要求沙箱，但当前平台"
+            f"（{platform}）无法启用 sandbox-exec；请设置 TEAMCODE_SANDBOX=0 "
+            "或 --no-sandbox 以明确关闭",
+        )
+
+    if available:
+        return SandboxDecision(
+            "sandbox",
+            "info",
+            "[sandbox] 写操作限制在 Worktree 与专用临时目录",
+        )
+    if macos:
+        return SandboxDecision(
+            "disabled",
+            "warn",
+            "[sandbox] sandbox-exec 不可用，写隔离已关闭",
+        )
+    return SandboxDecision(
+        "disabled",
+        "warn",
+        f"[sandbox] 当前平台（{platform}）不支持 sandbox-exec，写隔离已关闭；"
+        "请依赖路径权限等其它限制",
+    )
 
 
 def _quote(path: Path) -> str:
@@ -152,33 +225,33 @@ def main(argv: list[str] | None = None) -> int:
     env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
     env.setdefault("PYTEST_ADDOPTS", "-p no:cacheprovider")
     sandbox_temp: Path | None = None
-    if not args.no_sandbox and os.getenv("TEAMCODE_SANDBOX", "1") != "0":
-        sandbox_exec = shutil.which("sandbox-exec") or "/usr/bin/sandbox-exec"
-        if os.path.exists(sandbox_exec):
-            sandbox_temp = Path(
-                tempfile.mkdtemp(prefix="teamcode-agent-", dir="/private/tmp")
-            ).resolve()
-            env["TMPDIR"] = str(sandbox_temp)
-            profile = _sandbox_profile(
-                Path.cwd(),
-                sandbox_temp,
-                Path.home().resolve(),
-                read_isolation=(
-                    args.read_isolation
-                    or os.getenv(
-                        "TEAMCODE_SANDBOX_READ_ISOLATION", "0"
-                    )
-                    == "1"
-                ),
-            )
-            command = [sandbox_exec, "-p", profile, *command]
-            print("[sandbox] 写操作限制在 Worktree 与专用临时目录", flush=True)
-        else:
-            print(
-                "[sandbox] sandbox-exec 不可用，写隔离已关闭",
-                file=sys.stderr,
-                flush=True,
-            )
+    sandbox_exec = shutil.which("sandbox-exec") or "/usr/bin/sandbox-exec"
+    decision = _sandbox_decision(
+        sys.platform,
+        args.no_sandbox,
+        os.getenv("TEAMCODE_SANDBOX"),
+        os.path.exists(sandbox_exec),
+    )
+    if decision.message:
+        stream = sys.stdout if decision.level == "info" else sys.stderr
+        print(decision.message, file=stream, flush=True)
+    if decision.fatal:
+        return 2
+    if decision.mode == "sandbox":
+        sandbox_temp = Path(
+            tempfile.mkdtemp(prefix="teamcode-agent-", dir="/private/tmp")
+        ).resolve()
+        env["TMPDIR"] = str(sandbox_temp)
+        profile = _sandbox_profile(
+            Path.cwd(),
+            sandbox_temp,
+            Path.home().resolve(),
+            read_isolation=(
+                args.read_isolation
+                or os.getenv("TEAMCODE_SANDBOX_READ_ISOLATION", "0") == "1"
+            ),
+        )
+        command = [sandbox_exec, "-p", profile, *command]
 
     try:
         process = subprocess.Popen(
