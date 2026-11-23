@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
@@ -122,6 +122,33 @@ class ProjectRuntime:
 
 
 _runtimes: dict[str, ProjectRuntime] = {}
+
+# 每个 session 一把锁，保证日志 sequence 在单进程内单调递增且 id 稳定。
+# 课程演示部署为单 worker；多 worker 部署需要改用数据库序列或唯一约束重试。
+# 历史行 sequence 默认为 0，会排在最前面，不做回填。
+_session_log_locks: dict[str, asyncio.Lock] = {}
+
+
+def _session_log_lock(session_id: str) -> asyncio.Lock:
+    lock = _session_log_locks.get(session_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _session_log_locks[session_id] = lock
+    return lock
+
+
+def _log_id(session_id: str, sequence: int) -> str:
+    return f"log_{session_id}_{sequence:06d}"
+
+
+async def _next_sequence(db: AsyncSession, session_id: str) -> int:
+    """返回该 session 下一条日志应使用的 sequence（当前最大值 + 1）。"""
+    current = await db.scalar(
+        select(func.coalesce(func.max(AgentLogModel.sequence), 0)).where(
+            AgentLogModel.session_id == session_id
+        )
+    )
+    return int(current or 0) + 1
 
 
 async def shutdown_runtimes() -> None:
@@ -1005,11 +1032,17 @@ class IntegrationService:
         session = await self._latest_session(task.id)
         if session is None:
             return []
+        # sequence 是唯一排序键：同一时间戳的多条日志按写入顺序稳定返回。
+        # 历史行 sequence=0 会排在最前面（不回填）。
         rows = (
             await self.db.scalars(
                 select(AgentLogModel)
                 .where(AgentLogModel.session_id == session.id)
-                .order_by(AgentLogModel.ts, AgentLogModel.id)
+                .order_by(
+                    AgentLogModel.sequence,
+                    AgentLogModel.ts,
+                    AgentLogModel.id,
+                )
             )
         ).all()
         return [
@@ -1020,9 +1053,9 @@ class IntegrationService:
                 "ts": row.ts.isoformat(),
                 "level": row.level,
                 "message": row.message,
-                "sequence": index,
+                "sequence": row.sequence,
             }
-            for index, row in enumerate(rows)
+            for row in rows
         ]
 
     async def task_changes(
@@ -1633,20 +1666,25 @@ class IntegrationService:
         level: str,
         message: str,
     ) -> str:
-        log_id = f"log_{session_id}_{uuid4().hex[:8]}"
         now = utc_now()
-        db.add(
-            AgentLogModel(
-                id=log_id,
-                session_id=session_id,
-                ts=now,
-                level=level,
-                message=message,
+        # session 续聊时 stdout/stderr 两个 pump 共用同一个 log_db，
+        # 这里用按 session 的锁串行分配 sequence 并写入，避免并发写。
+        async with _session_log_lock(session_id):
+            sequence = await _next_sequence(db, session_id)
+            log_id = _log_id(session_id, sequence)
+            db.add(
+                AgentLogModel(
+                    id=log_id,
+                    session_id=session_id,
+                    ts=now,
+                    level=level,
+                    message=message,
+                    sequence=sequence,
+                )
             )
-        )
-        await db.commit()
+            await db.commit()
         self._publish_log_payload(
-            project_id, task_id, session_id, log_id, level, message, now
+            project_id, task_id, session_id, log_id, level, message, now, sequence
         )
         return log_id
 
@@ -1838,21 +1876,27 @@ class IntegrationService:
     ) -> int:
         logs = runtime.sessions.list_logs(session_id)
         new_logs = logs[seen:]
-        for log in new_logs:
-            log_id = f"log_{session_id}_{log.sequence}"
-            if await db.get(AgentLogModel, log_id) is None:
-                db.add(
-                    AgentLogModel(
-                        id=log_id,
-                        session_id=session_id,
-                        ts=log.ts,
-                        level=log.level,
-                        message=log.message,
-                    )
-                )
-                self._publish_log(project_id, task_id, session_id, log_id, log)
         if new_logs:
-            await db.commit()
+            # ``seen`` 游标保证不会重复插入，无需再按 id 探测已有行。
+            async with _session_log_lock(session_id):
+                base = await _next_sequence(db, session_id)
+                for offset, log in enumerate(new_logs):
+                    sequence = base + offset
+                    log_id = _log_id(session_id, sequence)
+                    db.add(
+                        AgentLogModel(
+                            id=log_id,
+                            session_id=session_id,
+                            ts=log.ts,
+                            level=log.level,
+                            message=log.message,
+                            sequence=sequence,
+                        )
+                    )
+                    self._publish_log(
+                        project_id, task_id, session_id, log_id, log, sequence
+                    )
+                await db.commit()
         return len(logs)
 
     async def _finalize(
@@ -1978,6 +2022,7 @@ class IntegrationService:
         session_id: str,
         log_id: str,
         log: Any,
+        sequence: int,
     ) -> None:
         self._publish_log_payload(
             project_id,
@@ -1987,6 +2032,7 @@ class IntegrationService:
             log.level,
             log.message,
             log.ts,
+            sequence,
         )
 
     def _publish_log_payload(
@@ -1998,6 +2044,7 @@ class IntegrationService:
         level: str,
         message: str,
         ts,
+        sequence: int,
     ) -> None:
         try:
             bus.publish(
@@ -2011,7 +2058,7 @@ class IntegrationService:
                         "ts": ts.isoformat(),
                         "level": level,
                         "message": message,
-                        "sequence": 0,
+                        "sequence": sequence,
                     },
                     task_id=task_id,
                 )
