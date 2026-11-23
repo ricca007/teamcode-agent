@@ -44,11 +44,22 @@ def _safe_relative(raw: str) -> tuple[str | None, str | None]:
     return pure.as_posix(), None
 
 
+# Matching follows the host filesystem's case sensitivity: case-insensitive on
+# Windows (and default macOS), case-sensitive on Linux. This keeps the policy
+# forgiving where the filesystem itself is forgiving, without silently
+# accepting ``SRC/...`` for an allow-list of ``src/**`` on Linux.
+_CASE_SENSITIVE = os.path.normcase("A") != os.path.normcase("a")
+
+
+def _fold(value: str) -> str:
+    return value if _CASE_SENSITIVE else value.casefold()
+
+
 def _matches(rel_path: str, pattern: str) -> bool:
     """Match a path pattern without letting ``*`` cross directory boundaries."""
 
-    rel = rel_path.casefold().rstrip("/")
-    candidate = pattern.casefold().rstrip("/")
+    rel = _fold(rel_path).rstrip("/")
+    candidate = _fold(pattern).rstrip("/")
     if "*" not in candidate and "?" not in candidate and "[" not in candidate:
         return rel == candidate or rel.startswith(candidate + "/")
 

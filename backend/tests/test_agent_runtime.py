@@ -1,4 +1,5 @@
 import asyncio
+import os
 import subprocess
 import sys
 import tempfile
@@ -15,10 +16,16 @@ from app.errors import (
     InvalidStateTransitionError,
     InvalidTaskError,
     PermissionDeniedError,
+    SessionNotFoundError,
     TaskAlreadyRunningError,
     WorkspaceError,
 )
-from app.git_ops.workspace import collect_changes, commit_changes, create_workspace
+from app.git_ops.workspace import (
+    cleanup_workspace,
+    collect_changes,
+    commit_changes,
+    create_workspace,
+)
 from app.log_stream import LogBroker
 from app.schemas.core import AgentStatus, TaskSpec
 from app.security.path_policy import validate_paths
@@ -81,7 +88,10 @@ class PathPolicyTests(unittest.TestCase):
             root.mkdir()
             outside = Path(tmp) / "outside.txt"
             outside.write_text("secret", encoding="utf-8")
-            (root / "link").symlink_to(outside)
+            try:
+                (root / "link").symlink_to(outside)
+            except OSError as exc:
+                self.skipTest(f"symlink creation unavailable on this platform: {exc}")
 
             result = validate_paths(
                 root,
@@ -94,16 +104,23 @@ class PathPolicyTests(unittest.TestCase):
             self.assertTrue(any("absolute" in reason for _, reason in result.rejected))
             self.assertTrue(any("escapes project root" in reason for _, reason in result.rejected))
 
-    def test_allowed_directory_and_glob_are_case_insensitive(self):
+    def test_allowed_directory_and_glob_follow_filesystem_case(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
             result = validate_paths(
-                root,
+                Path(tmp),
                 ["SRC/app.py", "docs/api.md"],
                 ["src", "docs/**"],
             )
-            self.assertTrue(result.ok)
-            self.assertEqual(result.allowed, ("SRC/app.py", "docs/api.md"))
+            case_sensitive = os.path.normcase("A") != os.path.normcase("a")
+            if case_sensitive:
+                self.assertFalse(result.ok)
+                self.assertEqual(
+                    result.rejected,
+                    (("SRC/app.py", "path is outside allowed_paths"),),
+                )
+            else:
+                self.assertTrue(result.ok)
+                self.assertEqual(result.allowed, ("SRC/app.py", "docs/api.md"))
 
     def test_reserved_metadata_paths_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -194,6 +211,29 @@ class MockRuntimeTests(unittest.IsolatedAsyncioTestCase):
             await manager.send_task(info.session_id, "prompt")
             with self.assertRaises(InvalidStateTransitionError):
                 await manager.pause(info.session_id)
+
+    async def test_terminate_interrupts_running_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = MockAdapter(delay=0.3)
+            manager = SessionManager()
+            info = await manager.start_session("p1", make_task(), Path(tmp), adapter)
+            running = asyncio.create_task(manager.send_task(info.session_id, "prompt"))
+            await asyncio.sleep(0.05)
+            status = await manager.terminate(info.session_id)
+            self.assertEqual(status, AgentStatus.TERMINATED)
+            await running
+            self.assertEqual(
+                manager.get_session(info.session_id).status,
+                AgentStatus.TERMINATED,
+            )
+
+    async def test_pause_resume_reflects_adapter_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = MockAdapter()
+            manager = SessionManager()
+            info = await manager.start_session("p1", make_task(), Path(tmp), adapter)
+            self.assertEqual(await manager.pause(info.session_id), AgentStatus.PAUSED)
+            self.assertEqual(await manager.resume(info.session_id), AgentStatus.RUNNING)
 
 
 class ExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
@@ -317,6 +357,56 @@ class ExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
                     author_name="bad\nname",
                 )
 
+    async def test_cleanup_removes_worktree_after_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(Path(tmp) / "repo")
+            service = ExecutionService(
+                repo_root=repo,
+                sessions=SessionManager(),
+                leader_id="lead",
+            )
+            task = make_task()
+            result = await service.run(
+                "p1",
+                task,
+                actor_id="u1",
+                adapter=MockAdapter(),
+                context={"write_files": {"src/app.py": "x = 1\n"}},
+            )
+            self.assertTrue(result.ok)
+            worktree = Path(repo) / ".teamcode" / "worktrees" / "p1" / "t1"
+            self.assertTrue(worktree.exists())
+            await service.cleanup("t1", "u1")
+            self.assertFalse(worktree.exists())
+
+    async def test_cleanup_refuses_running_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(Path(tmp) / "repo")
+            service = ExecutionService(
+                repo_root=repo,
+                sessions=SessionManager(),
+                leader_id="lead",
+            )
+            task = make_task(task_id="t-running")
+            running = asyncio.create_task(
+                service.run(
+                    "p1",
+                    task,
+                    actor_id="u1",
+                    adapter=MockAdapter(delay=0.5),
+                    context={"write_files": {"src/app.py": "x = 1\n"}},
+                )
+            )
+            for _ in range(200):
+                try:
+                    await service.status("t-running", "u1")
+                    break
+                except SessionNotFoundError:
+                    await asyncio.sleep(0.02)
+            with self.assertRaises(InvalidStateTransitionError):
+                await service.cleanup("t-running", "u1")
+            await running
+
 
 class ExecutionAPITests(unittest.IsolatedAsyncioTestCase):
     async def test_api_error_codes_are_structured(self):
@@ -425,18 +515,67 @@ class GitWorkspaceTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(WorkspaceError):
                 create_workspace("p1", "t-branch", repo, base_branch="--help")
 
+    async def test_cleanup_workspace_removes_path_and_branch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(Path(tmp) / "repo")
+            workspace = create_workspace("p1", "t-cleanup", repo)
+            self.assertTrue(workspace.worktree_path.exists())
+            cleanup_workspace(workspace, delete_branch=True)
+            self.assertFalse(workspace.worktree_path.exists())
+            branch_check = subprocess.run(
+                [
+                    "git",
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    f"refs/heads/{workspace.branch_name}",
+                ],
+                cwd=str(repo),
+                check=False,
+            )
+            self.assertNotEqual(branch_check.returncode, 0)
+
+    async def test_commit_records_custom_author(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(Path(tmp) / "repo")
+            workspace = create_workspace("p1", "t-author", repo)
+            (workspace.worktree_path / "src").mkdir()
+            (workspace.worktree_path / "src" / "ok.py").write_text(
+                "x = 1\n", encoding="utf-8"
+            )
+            commit_changes(
+                workspace,
+                ("src/**",),
+                "custom author",
+                author_name="Alice",
+                author_email="alice@example.invalid",
+            )
+            author = run_git(
+                workspace.worktree_path, "log", "-1", "--pretty=%an <%ae>"
+            )
+            self.assertEqual(author.strip(), "Alice <alice@example.invalid>")
+
 
 class GitParsingTests(unittest.IsolatedAsyncioTestCase):
     async def test_unusual_filename_is_collected(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = make_repo(Path(tmp) / "repo")
             workspace = create_workspace("p1", "t-weird", repo)
-            name = 'weird "name" with space.txt'
+            name = "weird (name) with space.txt"
             (workspace.worktree_path / name).write_text("ok\n", encoding="utf-8")
             changes = collect_changes(workspace.worktree_path)
             self.assertIn(name, changes.files)
             commit_hash = commit_changes(workspace, (name,), "weird filename")
             self.assertTrue(commit_hash)
+
+    async def test_binary_untracked_file_body_is_omitted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(Path(tmp) / "repo")
+            workspace = create_workspace("p1", "t-bin", repo)
+            (workspace.worktree_path / "data.bin").write_bytes(b"\x00\x01\x02")
+            changes = collect_changes(workspace.worktree_path)
+            self.assertIn("data.bin", changes.files)
+            self.assertIn("binary or large file omitted", changes.diff)
 
 
 class CLIAdapterTests(unittest.IsolatedAsyncioTestCase):
@@ -478,6 +617,28 @@ class CLIAdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("output.txt", changes.files)
             logs = [log async for log in adapter.stream_logs(info.session_id)]
             self.assertTrue(logs)
+
+    async def test_cli_adapter_arg_mode_passes_prompt_as_argument(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(Path(tmp) / "repo")
+            script = (
+                "import pathlib, sys; "
+                "pathlib.Path('argv.txt').write_text(repr(sys.argv[1:]), encoding='utf-8')"
+            )
+            adapter = CLIAdapter(
+                CLIAdapterConfig(
+                    command=(sys.executable, "-c", script),
+                    prompt_mode="arg",
+                    timeout=5,
+                )
+            )
+            info = await adapter.start_session(make_task(), repo, {})
+            await adapter.send_task(info.session_id, "hello prompt")
+            self.assertEqual(await adapter.get_status(info.session_id), AgentStatus.SUCCEEDED)
+            self.assertEqual(
+                (repo / "argv.txt").read_text(encoding="utf-8"),
+                "['hello prompt']",
+            )
 
 
 if __name__ == "__main__":

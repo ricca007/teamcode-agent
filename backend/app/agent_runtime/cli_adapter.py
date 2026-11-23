@@ -191,6 +191,8 @@ class CLIAdapter:
                 prompt_path = prompt_dir / f"{session_id}-{self.config.prompt_filename}"
                 prompt_path.write_text(prompt, encoding="utf-8")
             command = self._build_command(prompt_path)
+            if self.config.prompt_mode == "arg":
+                command.append(prompt)
         except (OSError, AdapterError, ValueError) as exc:
             await self._emit(session, "error", f"failed to prepare CLI task: {exc}")
             await self._finish(session, AgentStatus.FAILED)
