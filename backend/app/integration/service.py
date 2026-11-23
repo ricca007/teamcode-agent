@@ -2206,6 +2206,9 @@ class IntegrationService:
                     f"role_{slug or 'member'}",
                     name=f"角色 {role_name}",
                 )
+                # 占位角色也登记为项目成员，否则它们不会出现在成员列表和
+                # 任务分配下拉框里，任务一旦改走就无法再分配给该角色。
+                await self._ensure_project_member(project_id, user.id)
                 specs.append(
                     TeamMemberSpec(
                         member_id=user.id, name=user.name, areas=[]
