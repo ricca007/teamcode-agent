@@ -47,6 +47,11 @@ def _safe_relative(raw: str) -> tuple[str | None, str | None]:
 def _matches(rel_path: str, pattern: str) -> bool:
     """Match a path pattern without letting ``*`` cross directory boundaries."""
 
+    # Matching is deliberately case-insensitive. This matches Windows behaviour
+    # and keeps the policy forgiving, but on a case-sensitive filesystem (the
+    # Linux containers used in production) it also means a pattern like
+    # ``src/**`` will accept ``SRC/...``. Keep this in mind when tightening the
+    # allow-list for security-sensitive repositories.
     rel = rel_path.casefold().rstrip("/")
     candidate = pattern.casefold().rstrip("/")
     if "*" not in candidate and "?" not in candidate and "[" not in candidate:

@@ -59,7 +59,9 @@ class ExecutionAPI:
 
     Keeping the request handler framework-neutral lets the group test the task
     execution chain before A introduces FastAPI. ``create_fastapi_router`` can
-    wrap this facade once FastAPI is available.
+    wrap this facade once FastAPI is available. The production HTTP surface is
+    now served by ``app.integration.api``; this module is retained for
+    framework-neutral testing and as a reference contract.
     """
 
     def __init__(self, service: ExecutionService) -> None:

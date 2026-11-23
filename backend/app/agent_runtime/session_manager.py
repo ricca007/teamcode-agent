@@ -160,33 +160,36 @@ class SessionManager:
 
     async def pause(self, session_id: str) -> AgentStatus:
         managed = self._get(session_id)
-        async with managed.lock:
-            if managed.info.status not in {AgentStatus.PENDING, AgentStatus.RUNNING}:
-                raise InvalidStateTransitionError(f"cannot pause {managed.info.status.value}")
-            await managed.adapter.pause(session_id)
-            managed.info = managed.info.with_status(AgentStatus.PAUSED)
-            self.store.save_session(managed.info)
-            return managed.info.status
+        if managed.info.status not in {AgentStatus.PENDING, AgentStatus.RUNNING}:
+            raise InvalidStateTransitionError(f"cannot pause {managed.info.status.value}")
+        # Do not hold ``managed.lock`` here: ``send_task`` keeps it for the whole
+        # agent run, so control operations would otherwise block until the
+        # session finishes. The adapter guards its own state transitions and is
+        # safe to signal concurrently.
+        await managed.adapter.pause(session_id)
+        managed.info = managed.info.with_status(AgentStatus.PAUSED)
+        self.store.save_session(managed.info)
+        return managed.info.status
 
     async def resume(self, session_id: str) -> AgentStatus:
         managed = self._get(session_id)
-        async with managed.lock:
-            if managed.info.status != AgentStatus.PAUSED:
-                raise InvalidStateTransitionError(f"cannot resume {managed.info.status.value}")
-            await managed.adapter.resume(session_id)
-            managed.info = managed.info.with_status(AgentStatus.RUNNING)
-            self.store.save_session(managed.info)
-            return managed.info.status
+        if managed.info.status != AgentStatus.PAUSED:
+            raise InvalidStateTransitionError(f"cannot resume {managed.info.status.value}")
+        await managed.adapter.resume(session_id)
+        managed.info = managed.info.with_status(AgentStatus.RUNNING)
+        self.store.save_session(managed.info)
+        return managed.info.status
 
     async def terminate(self, session_id: str) -> AgentStatus:
         managed = self._get(session_id)
-        async with managed.lock:
-            if managed.info.status.terminal:
-                raise InvalidStateTransitionError("session already terminal")
-            await managed.adapter.terminate(session_id)
-            managed.info = managed.info.with_status(AgentStatus.TERMINATED)
-            self.store.save_session(managed.info)
-            return managed.info.status
+        if managed.info.status.terminal:
+            raise InvalidStateTransitionError("session already terminal")
+        # Same rationale as ``pause``: interrupting a running session must not
+        # wait for ``send_task`` to release the long-held lock.
+        await managed.adapter.terminate(session_id)
+        managed.info = managed.info.with_status(AgentStatus.TERMINATED)
+        self.store.save_session(managed.info)
+        return managed.info.status
 
     async def get_status(self, session_id: str) -> AgentStatus:
         managed = self._get(session_id)

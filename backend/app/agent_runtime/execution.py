@@ -25,6 +25,16 @@ from .session_manager import SessionManager
 
 @dataclass
 class ExecutionService:
+    """Role-B orchestration service (TaskSpec -> Worktree -> Adapter -> checks).
+
+    Note: the application wiring in ``app.integration.service`` drives tasks
+    through ``SessionManager``, ``create_workspace``, ``commit_changes`` and
+    ``validate_paths`` directly rather than through this class. This service
+    remains the framework-neutral entry point used by role-B tests and can be
+    kept as the canonical orchestration layer if the integration is refactored
+    to call it.
+    """
+
     repo_root: Path
     sessions: SessionManager
     leader_id: str | None = None

@@ -81,7 +81,10 @@ class PathPolicyTests(unittest.TestCase):
             root.mkdir()
             outside = Path(tmp) / "outside.txt"
             outside.write_text("secret", encoding="utf-8")
-            (root / "link").symlink_to(outside)
+            try:
+                (root / "link").symlink_to(outside)
+            except OSError as exc:
+                self.skipTest(f"symlink creation unavailable on this platform: {exc}")
 
             result = validate_paths(
                 root,
@@ -194,6 +197,21 @@ class MockRuntimeTests(unittest.IsolatedAsyncioTestCase):
             await manager.send_task(info.session_id, "prompt")
             with self.assertRaises(InvalidStateTransitionError):
                 await manager.pause(info.session_id)
+
+    async def test_terminate_interrupts_running_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = MockAdapter(delay=0.3)
+            manager = SessionManager()
+            info = await manager.start_session("p1", make_task(), Path(tmp), adapter)
+            running = asyncio.create_task(manager.send_task(info.session_id, "prompt"))
+            await asyncio.sleep(0.05)
+            status = await manager.terminate(info.session_id)
+            self.assertEqual(status, AgentStatus.TERMINATED)
+            await running
+            self.assertEqual(
+                manager.get_session(info.session_id).status,
+                AgentStatus.TERMINATED,
+            )
 
 
 class ExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
@@ -431,12 +449,21 @@ class GitParsingTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = make_repo(Path(tmp) / "repo")
             workspace = create_workspace("p1", "t-weird", repo)
-            name = 'weird "name" with space.txt'
+            name = "weird (name) with space.txt"
             (workspace.worktree_path / name).write_text("ok\n", encoding="utf-8")
             changes = collect_changes(workspace.worktree_path)
             self.assertIn(name, changes.files)
             commit_hash = commit_changes(workspace, (name,), "weird filename")
             self.assertTrue(commit_hash)
+
+    async def test_binary_untracked_file_body_is_omitted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(Path(tmp) / "repo")
+            workspace = create_workspace("p1", "t-bin", repo)
+            (workspace.worktree_path / "data.bin").write_bytes(b"\x00\x01\x02")
+            changes = collect_changes(workspace.worktree_path)
+            self.assertIn("data.bin", changes.files)
+            self.assertIn("binary or large file omitted", changes.diff)
 
 
 class CLIAdapterTests(unittest.IsolatedAsyncioTestCase):
@@ -478,6 +505,28 @@ class CLIAdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("output.txt", changes.files)
             logs = [log async for log in adapter.stream_logs(info.session_id)]
             self.assertTrue(logs)
+
+    async def test_cli_adapter_arg_mode_passes_prompt_as_argument(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(Path(tmp) / "repo")
+            script = (
+                "import pathlib, sys; "
+                "pathlib.Path('argv.txt').write_text(repr(sys.argv[1:]), encoding='utf-8')"
+            )
+            adapter = CLIAdapter(
+                CLIAdapterConfig(
+                    command=(sys.executable, "-c", script),
+                    prompt_mode="arg",
+                    timeout=5,
+                )
+            )
+            info = await adapter.start_session(make_task(), repo, {})
+            await adapter.send_task(info.session_id, "hello prompt")
+            self.assertEqual(await adapter.get_status(info.session_id), AgentStatus.SUCCEEDED)
+            self.assertEqual(
+                (repo / "argv.txt").read_text(encoding="utf-8"),
+                "['hello prompt']",
+            )
 
 
 if __name__ == "__main__":

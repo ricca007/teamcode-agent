@@ -144,6 +144,23 @@ def _split_z(value: str) -> list[str]:
     return [item for item in value.split("\x00") if item]
 
 
+_MAX_EMBED_BYTES = 512 * 1024
+
+
+def _untracked_body(target: Path) -> str | None:
+    """Return untracked-file text, or ``None`` for binary/oversized files."""
+
+    try:
+        if target.stat().st_size > _MAX_EMBED_BYTES:
+            return None
+        raw = target.read_bytes()
+    except OSError:
+        return ""
+    if b"\x00" in raw:
+        return None
+    return raw.decode("utf-8", errors="replace")
+
+
 def collect_changes(worktree_path: Path) -> ChangeSet:
     root = _git_root(Path(worktree_path))
     head = _run_git(root, "rev-parse", "--verify", "HEAD", check=False).strip()
@@ -168,10 +185,13 @@ def collect_changes(worktree_path: Path) -> ChangeSet:
 
     for path in untracked:
         target = root / path
-        try:
-            body = target.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            body = ""
+        body = _untracked_body(target)
+        if body is None:
+            diff += (
+                f"diff --git a/{path} b/{path}\n--- /dev/null\n+++ b/{path}\n"
+                "@@ -0,0 +1 @@\n+<binary or large file omitted>\n"
+            )
+            continue
         diff += "diff --git a/{0} b/{0}\n--- /dev/null\n+++ b/{0}\n{1}\n".format(
             path,
             "".join(f"+{line}\n" for line in body.splitlines()),
