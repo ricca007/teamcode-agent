@@ -585,6 +585,11 @@ export interface TaskDetail {
   warnings: string[];
 }
 
+/** 任务尚未运行过（没有会话）属于正常状态，不应作为告警展示。 */
+function isNoSession(error: unknown): boolean {
+  return error instanceof ApiError && error.code === "session_not_found";
+}
+
 /** 拉取单个任务的会话、日志与变更；子请求失败只记录到 warnings。 */
 export async function loadTaskDetail(taskId: string): Promise<TaskDetail> {
   const warnings: string[] = [];
@@ -600,7 +605,7 @@ export async function loadTaskDetail(taskId: string): Promise<TaskDetail> {
 
   if (sessionResult.status === "fulfilled") {
     session = sessionResult.value;
-  } else {
+  } else if (!isNoSession(sessionResult.reason)) {
     warnings.push(`任务 ${taskId} 会话不可用：${errorMessage(sessionResult.reason)}`);
   }
   if (logsResult.status === "fulfilled") {

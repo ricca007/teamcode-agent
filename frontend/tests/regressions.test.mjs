@@ -88,6 +88,31 @@ test("leaders see newly planned tasks and reassigned members lose the old task",
   assert.deepEqual(store.getState().tasks, []);
 });
 
+test("a task without a session is not reported as a failed request", async () => {
+  const source = await readFile(new URL("../src/api/client.ts", import.meta.url), "utf8");
+  const client = await import(moduleUrl(source));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (url.endsWith("/status")) {
+      return new Response(
+        JSON.stringify({ code: "session_not_found", message: "任务还没有运行记录" }),
+        { status: 404, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (url.endsWith("/logs")) {
+      return new Response(JSON.stringify({ logs: [] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ changes: [] }), { status: 200 });
+  };
+  try {
+    const detail = await client.loadTaskDetail("task_planned");
+    assert.deepEqual(detail.warnings, []);
+    assert.equal(detail.session, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("frontend signature preserves Python argument separators", async () => {
   const source = await readFile(new URL("../src/lib/format.ts", import.meta.url), "utf8");
   const { signatureOf } = await import(moduleUrl(source));
