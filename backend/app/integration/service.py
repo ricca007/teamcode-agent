@@ -38,7 +38,9 @@ from sqlalchemy.orm import selectinload
 from app.agent_runtime.cli_adapter import CLIAdapter, CLIAdapterConfig
 from app.agent_runtime.mock_adapter import MockAdapter
 from app.agent_runtime.session_manager import SessionManager
+from app.errors import WorkspaceError
 from app.git_ops.workspace import (
+    _validate_branch,  # TODO(B): promote to a public export.
     cleanup_workspace,
     collect_changes,
     commit_changes,
@@ -1198,15 +1200,14 @@ class IntegrationService:
         project = await self._get_project(project_id)
         repo_root = Path(project.repo_path).resolve()
         base = (request.base_branch or "main").strip()
-        if (
-            not re.fullmatch(r"[A-Za-z0-9._/-]+", base)
-            or base.startswith("-")
-            or ".." in base
-        ):
-            raise IntegrationError(
-                "invalid_base_branch", f"非法的主分支名: {base}", 400
-            )
         branch = task.branch_name or f"teamcode/{project.id}/{task.id}"
+        try:
+            _validate_branch(base, "base_branch")
+            _validate_branch(branch, "branch")
+        except WorkspaceError as exc:
+            raise IntegrationError(
+                "invalid_base_branch", f"非法分支名: {exc}", 400
+            ) from exc
         workspace = GitWorkspace(
             project_id=project.id,
             task_id=task.id,
