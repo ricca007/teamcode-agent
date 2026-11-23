@@ -5,27 +5,98 @@ API, event, or data structure, and notify all affected owners.
 
 ## REST API
 
-| Method | Path | Purpose | Owner |
-| --- | --- | --- | --- |
-| POST | `/api/projects` | Create a project | A |
-| POST | `/api/projects/{id}/members` | Invite a member and assign a role | A |
-| POST | `/api/projects/{id}/requirements` | Submit requirements and trigger planning | A |
-| GET | `/api/projects/{id}/plan` | Read the current plan and version | A |
-| GET | `/api/projects/{id}/tasks` | List project tasks | A |
-| POST | `/api/tasks/{id}/run` | Create a worktree and start an Agent | B |
-| POST | `/api/tasks/{id}/pause` | Pause an Agent | B |
-| POST | `/api/tasks/{id}/resume` | Resume an Agent | B |
-| POST | `/api/tasks/{id}/terminate` | Terminate an Agent | B |
-| POST | `/api/tasks/{id}/commit` | Commit authorized task changes | B |
-| GET | `/api/tasks/{id}/status` | Read session status | B |
-| GET | `/api/tasks/{id}/logs` | Read session logs | B |
-| GET | `/api/tasks/{id}/changes` | Read file changes and commits | B |
-| GET | `/api/projects/{id}/interfaces` | List interfaces or pull Markdown | C |
-| GET | `/api/interfaces/{interface_id}` | Read one interface | C |
-| POST | `/api/projects/{id}/interfaces/refresh` | Trigger an interface rescan | C |
-| WS | `/ws/projects/{id}` | Receive project realtime events | C route owner |
+All routes below are mounted by `backend/app/main.py`. Authentication is
+enforced when `TEAMCODE_AUTH_REQUIRED` is enabled. API keys may be supplied as
+an authorization token; the WebSocket also accepts `?token=...`.
+
+### Identity And Teams
+
+| Method | Path | Request body | Purpose | Owner |
+| --- | --- | --- | --- | --- |
+| GET | `/api/me` | - | Return the current identity | C integration |
+| GET | `/api/agents` | - | List available Coding Agents | C integration |
+| POST | `/api/auth/register` | `RegisterRequest` | Register a global account | C integration |
+| POST | `/api/auth/login` | `LoginRequest` | Log in and obtain a session token | C integration |
+| POST | `/api/auth/api-keys` | `ApiKeyCreate` | Create an API key | C integration |
+| GET | `/api/auth/api-keys` | - | List the caller's API keys | C integration |
+| DELETE | `/api/auth/api-keys/{key_id}` | - | Revoke an API key | C integration |
+| GET | `/api/projects` | - | List teams available to the caller | C integration |
+| GET | `/api/join-requests/mine` | - | List the caller's join requests | C integration |
+| POST | `/api/projects/{project_id}/join-requests` | `JoinTeamRequest` | Request to join a team | C integration |
+| POST | `/api/join-requests` | `JoinRequestCreate` | Create a legacy device join request | C integration |
+| GET | `/api/join-requests/{request_id}` | - | Read join-request status | C integration |
+| GET | `/api/projects/{project_id}/join-requests` | - | List join requests as team leader | C integration |
+| POST | `/api/projects/{project_id}/join-requests/{request_id}/approve` | `ApproveJoinRequest` | Approve a join request | C integration |
+| POST | `/api/projects/{project_id}/join-requests/{request_id}/reject` | - | Reject a join request | C integration |
+| POST | `/api/projects` | `ProjectCreateRequest` | Create a team/project | C integration |
+| GET | `/api/projects/{project_id}` | - | Read project details | C integration |
+| POST | `/api/projects/{project_id}/members` | `MemberCreateRequest` | Add a project member | C integration |
+| GET | `/api/projects/{project_id}/members` | - | List project members | C integration |
+
+### Planning
+
+| Method | Path | Request body | Purpose | Owner |
+| --- | --- | --- | --- | --- |
+| POST | `/api/projects/{project_id}/requirements` | `RequirementsRequest` | Trigger initial planning or replanning | A planning |
+| GET | `/api/projects/{project_id}/plan` | - | Read the active plan and version | A planning |
+| GET | `/api/projects/{project_id}/tasks` | - | List project tasks | A planning |
+| POST | `/api/projects/{project_id}/tasks/{task_id}/assign` | `AssignTaskRequest` | Assign a task to a member | A planning |
+
+### Task Runtime
+
+| Method | Path | Request body | Purpose | Owner |
+| --- | --- | --- | --- | --- |
+| POST | `/api/tasks/{task_id}/run` | `RunRequest` | Start a Coding Agent session | B runtime |
+| POST | `/api/tasks/{task_id}/pause` | - | Pause a session | B runtime |
+| POST | `/api/tasks/{task_id}/resume` | - | Resume a session | B runtime |
+| POST | `/api/tasks/{task_id}/terminate` | - | Terminate a session | B runtime |
+| GET | `/api/tasks/{task_id}/status` | - | Read the latest session status | B runtime |
+| GET | `/api/tasks/{task_id}/logs` | - | Read ordered session logs | B runtime |
+| GET | `/api/tasks/{task_id}/changes` | - | Read captured file changes | B runtime |
+| POST | `/api/tasks/{task_id}/messages` | `MessageRequest` | Continue the active agent conversation | B runtime |
+| POST | `/api/projects/{project_id}/tasks/{task_id}/merge` | `MergeTaskRequest` | Merge a task branch and rescan interfaces | B runtime + C integration |
+| POST | `/api/tasks/{task_id}/commit` | `CommitRequest` | Commit authorized task changes | B runtime |
+
+### Interface Registry And System
+
+| Method | Path | Request body | Purpose | Owner |
+| --- | --- | --- | --- | --- |
+| GET | `/api/projects/{project_id}/interfaces` | - | List interfaces or pull Markdown | C interface registry |
+| GET | `/api/interfaces/{interface_id}` | - | Read one interface | C interface registry |
+| POST | `/api/projects/{project_id}/interfaces/refresh` | `RefreshRequest` | Trigger an interface rescan | C interface registry |
+| GET | `/health/interfaces` | - | Read watcher/registry health | C interface registry |
+| GET | `/health` | - | API liveness | Shared |
+| GET | `/health/database` | - | Database readiness | Shared |
 
 The interfaces endpoint supports `?format=json` and `?format=markdown`.
+
+### WebSocket
+
+| Protocol | Path | Authentication | Purpose | Owner |
+| --- | --- | --- | --- | --- |
+| WebSocket | `/ws/projects/{project_id}` | Optional `?token=...` | Receive project realtime events | C realtime |
+
+The client may send `ping`; the server responds with a `pong` event.
+
+## Request Models
+
+| Model | Fields |
+| --- | --- |
+| `RegisterRequest` | `name`, `email`, `password` |
+| `LoginRequest` | `email`, `password` |
+| `ApiKeyCreate` | `name`, optional `project_id` |
+| `ProjectCreateRequest` | `name`, `repo_path`, optional `project_id`, `owner_id`, `owner_name`, `owner_email` |
+| `MemberCreateRequest` | `user_id`, optional `name`, `email`, `role` |
+| `JoinTeamRequest` | optional `areas` |
+| `JoinRequestCreate` | `project_id`, `display_name`, `device_id`, `device_secret` |
+| `ApproveJoinRequest` | optional `areas` |
+| `RequirementsRequest` | `requirements`, `members`, `roles`, `max_tasks`, `mode` |
+| `AssignTaskRequest` | `user_id` |
+| `RunRequest` | optional `actor_id`, `agent_name`, `adapter_name`, `prompt`, `context`; `base_branch` |
+| `MessageRequest` | `message`, optional `actor_id` |
+| `MergeTaskRequest` | `message`, `base_branch` |
+| `CommitRequest` | optional `actor_id`; required `message` |
+| `RefreshRequest` | optional `root`; `include_tests` |
 
 ## Realtime Event Envelope
 
@@ -41,9 +112,13 @@ The interfaces endpoint supports `?format=json` and `?format=markdown`.
 
 Event ownership:
 
-- `task.updated`: A
-- `agent.log` and `code.changed`: B
-- `interface.updated`: C
+- `task.updated`: `IntegrationService`; payload contract owned by A planning
+- `agent.log` and `code.changed`: `IntegrationService`; payload contract owned by B runtime
+- `interface.updated`: interface registry watcher/refresh or integration merge; owned by C
+
+All events use the envelope above. `task_id` may be `null` for project-level
+events. Members who are not team leaders receive only `agent.log` and
+`code.changed` events for tasks they own.
 
 ## Coding Agent Adapter Protocol
 

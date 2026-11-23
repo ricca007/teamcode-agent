@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, enum_values, new_id
@@ -56,6 +56,7 @@ class AgentSession(Base):
 
 class AgentLog(Base):
     __tablename__ = "agent_logs"
+    __table_args__ = (Index("ix_agent_logs_session_id_sequence", "session_id", "sequence"),)
 
     id: Mapped[str] = mapped_column(
         String(64),
@@ -75,6 +76,12 @@ class AgentLog(Base):
     )
     level: Mapped[str] = mapped_column(String(32), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
+    sequence: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        server_default=text("0"),
+        nullable=False,
+    )
 
     session: Mapped["AgentSession"] = relationship(back_populates="logs")
 

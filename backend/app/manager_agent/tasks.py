@@ -16,7 +16,7 @@ TASK_PATH_PREFIXES = {
     "interface": "backend/app/interface_registry",
     "agent": "backend/app/manager_agent",
     "frontend": "frontend/src",
-    "core": "backend/app",
+    "core": "backend/app/core",
 }
 
 DEPENDENCY_RULES = {
@@ -24,6 +24,8 @@ DEPENDENCY_RULES = {
     "frontend": ("user", "product", "coupon", "order", "interface"),
     "agent": ("interface",),
 }
+
+_AREA_SEPARATOR = re.compile(r"[\s,;/|+]+")
 
 
 def decompose_tasks(
@@ -129,8 +131,8 @@ def assign_tasks(
 
 
 def _area_matches(area: str, module: str) -> bool:
-    normalized = area.strip().lower()
-    return normalized == module or normalized.startswith(f"{module},") or f",{module}" in normalized
+    tokens = {token for token in _AREA_SEPARATOR.split(area.casefold()) if token}
+    return module in tokens
 
 
 def _slug(value: str) -> str:
