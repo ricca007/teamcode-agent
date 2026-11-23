@@ -38,7 +38,12 @@ from sqlalchemy.orm import selectinload
 from app.agent_runtime.cli_adapter import CLIAdapter, CLIAdapterConfig
 from app.agent_runtime.mock_adapter import MockAdapter
 from app.agent_runtime.session_manager import SessionManager
-from app.git_ops.workspace import collect_changes, commit_changes, create_workspace
+from app.git_ops.workspace import (
+    cleanup_workspace,
+    collect_changes,
+    commit_changes,
+    create_workspace,
+)
 from app.integration.agents import agent_specs, generic_wrapper_path
 from app.integration.auth import (
     Actor,
@@ -1183,6 +1188,13 @@ class IntegrationService:
                 "workspace_missing", "任务 Worktree 不存在", 409
             )
 
+        # 运行中的任务不能合并：清理会删掉正在被 Agent 使用的 Worktree。
+        runtime = _runtimes.get(project_id)
+        if runtime is not None and task.id in runtime.active_tasks:
+            raise IntegrationError(
+                "task_running", "任务仍在运行，请结束后再合并", 409
+            )
+
         project = await self._get_project(project_id)
         repo_root = Path(project.repo_path).resolve()
         base = (request.base_branch or "main").strip()
@@ -1244,6 +1256,23 @@ class IntegrationService:
         # 3) 重扫接口注册表并推送
         interface_summary = await self._refresh_registry_after_merge(project)
 
+        # 4) 清理已合并的 Worktree；清理失败只告警，不影响合并结果。
+        # 默认保留分支，便于回溯；设置 TEAMCODE_MERGE_DELETE_BRANCH=1 时一并删除。
+        delete_branch = os.getenv("TEAMCODE_MERGE_DELETE_BRANCH", "0") == "1"
+        workspace_cleaned = False
+        workspace_cleanup_error: str | None = None
+        try:
+            await asyncio.to_thread(cleanup_workspace, workspace, delete_branch)
+            workspace_cleaned = True
+        except Exception as exc:
+            workspace_cleanup_error = str(exc)
+            logger.warning(
+                "合并后清理 Worktree 失败: project=%s task=%s %s",
+                project.id,
+                task.id,
+                exc,
+            )
+
         logger.info(
             "任务已合并: project=%s task=%s branch=%s base=%s merge=%s",
             project.id,
@@ -1259,6 +1288,8 @@ class IntegrationService:
             "commit_hash": commit_hash,
             "merge_commit": merge_commit,
             "interfaces": interface_summary,
+            "workspace_cleaned": workspace_cleaned,
+            "workspace_cleanup_error": workspace_cleanup_error,
         }
 
     @staticmethod
