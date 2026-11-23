@@ -7,6 +7,7 @@ never pushes to a remote and never changes global Git configuration.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
@@ -283,13 +284,26 @@ def prepare_pr_metadata(
 
 
 def cleanup_workspace(workspace: GitWorkspace, delete_branch: bool = False) -> None:
-    root = workspace.root
-    path = workspace.worktree_path
-    if path.exists():
+    """Remove a task worktree and optionally its branch.
+
+    Only paths under the managed worktrees directory are deleted directly.
+    Registered worktrees are removed through Git so its metadata stays
+    consistent.
+    """
+
+    root = _git_root(workspace.root)
+    path = Path(workspace.worktree_path).resolve()
+    if path in _registered_worktrees(root):
         _run_git(root, "worktree", "remove", "--force", str(path))
     _run_git(root, "worktree", "prune")
-    if delete_branch:
+
+    managed_parent = (root / ".teamcode" / "worktrees").resolve()
+    if path.exists() and (path == managed_parent or managed_parent in path.parents):
+        shutil.rmtree(path, ignore_errors=True)
+
+    if delete_branch and _branch_exists(root, workspace.branch_name):
         _run_git(root, "branch", "-D", workspace.branch_name)
+
     parent = path.parent
     try:
         if parent.exists() and not any(parent.iterdir()):

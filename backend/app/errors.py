@@ -18,6 +18,10 @@ class SessionNotFoundError(Role2Error):
     pass
 
 
+class SessionAlreadyExistsError(Role2Error):
+    pass
+
+
 class InvalidStateTransitionError(Role2Error):
     pass
 

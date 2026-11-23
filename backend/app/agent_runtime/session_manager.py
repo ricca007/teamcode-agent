@@ -8,7 +8,11 @@ from typing import Any, Protocol
 
 from app.schemas.core import AgentLog, AgentStatus, ChangeSet, SessionInfo, TaskSpec, utc_now
 
-from ..errors import InvalidStateTransitionError, SessionNotFoundError
+from ..errors import (
+    InvalidStateTransitionError,
+    SessionAlreadyExistsError,
+    SessionNotFoundError,
+)
 from ..log_stream import LogBroker
 from .base import CodingAgentAdapter
 
@@ -85,6 +89,10 @@ class SessionManager:
         env: dict[str, str] | None = None,
     ) -> SessionInfo:
         info = await adapter.start_session(task, workspace, env)
+        if info.session_id in self._sessions:
+            raise SessionAlreadyExistsError(
+                f"session {info.session_id} already exists"
+            )
         managed = _ManagedSession(
             project_id=project_id,
             task_id=task.task_id,
@@ -167,7 +175,8 @@ class SessionManager:
         # session finishes. The adapter guards its own state transitions and is
         # safe to signal concurrently.
         await managed.adapter.pause(session_id)
-        managed.info = managed.info.with_status(AgentStatus.PAUSED)
+        status = await managed.adapter.get_status(session_id)
+        managed.info = managed.info.with_status(status)
         self.store.save_session(managed.info)
         return managed.info.status
 
@@ -176,7 +185,8 @@ class SessionManager:
         if managed.info.status != AgentStatus.PAUSED:
             raise InvalidStateTransitionError(f"cannot resume {managed.info.status.value}")
         await managed.adapter.resume(session_id)
-        managed.info = managed.info.with_status(AgentStatus.RUNNING)
+        status = await managed.adapter.get_status(session_id)
+        managed.info = managed.info.with_status(status)
         self.store.save_session(managed.info)
         return managed.info.status
 
@@ -187,7 +197,8 @@ class SessionManager:
         # Same rationale as ``pause``: interrupting a running session must not
         # wait for ``send_task`` to release the long-held lock.
         await managed.adapter.terminate(session_id)
-        managed.info = managed.info.with_status(AgentStatus.TERMINATED)
+        status = await managed.adapter.get_status(session_id)
+        managed.info = managed.info.with_status(status)
         self.store.save_session(managed.info)
         return managed.info.status
 

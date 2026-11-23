@@ -13,6 +13,7 @@ from ..errors import (
     InvalidTaskError,
     PermissionDeniedError,
     Role2Error,
+    SessionAlreadyExistsError,
     SessionNotFoundError,
     TaskAlreadyRunningError,
     WorkspaceError,
@@ -26,6 +27,7 @@ def _http_status(response: dict[str, Any]) -> int:
     return {
         "permission_denied": 403,
         "session_not_found": 404,
+        "session_already_exists": 409,
         "task_already_running": 409,
         "task_conflict": 409,
         "invalid_state_transition": 409,
@@ -43,6 +45,8 @@ def _error_response(exc: Role2Error) -> dict[str, Any]:
         code = "task_conflict"
     elif isinstance(exc, SessionNotFoundError):
         code = "session_not_found"
+    elif isinstance(exc, SessionAlreadyExistsError):
+        code = "session_already_exists"
     elif isinstance(exc, InvalidStateTransitionError):
         code = "invalid_state_transition"
     elif isinstance(exc, WorkspaceError):
@@ -159,6 +163,22 @@ class ExecutionAPI:
         except Role2Error as exc:
             return _error_response(exc)
 
+    async def cleanup(
+        self,
+        task_or_session_id: str,
+        actor_id: str,
+        delete_branch: bool = False,
+    ) -> dict[str, Any]:
+        try:
+            await self.service.cleanup(
+                task_or_session_id,
+                actor_id,
+                delete_branch=delete_branch,
+            )
+            return {"ok": True, "task_or_session_id": task_or_session_id}
+        except Role2Error as exc:
+            return _error_response(exc)
+
 
 def create_fastapi_router(service: ExecutionService):
     """Return a FastAPI router when FastAPI is installed.
@@ -238,6 +258,13 @@ def create_fastapi_router(service: ExecutionService):
     @router.get("/api/tasks/{task_id}/changes")
     async def task_changes(task_id: str, actor_id: str):
         response = await api.changes(task_id, actor_id)
+        if not response["ok"]:
+            raise HTTPException(status_code=_http_status(response), detail=response["error"])
+        return response
+
+    @router.delete("/api/tasks/{task_id}/workspace")
+    async def cleanup_task(task_id: str, actor_id: str):
+        response = await api.cleanup(task_id, actor_id)
         if not response["ok"]:
             raise HTTPException(status_code=_http_status(response), detail=response["error"])
         return response

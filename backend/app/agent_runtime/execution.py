@@ -11,12 +11,18 @@ from typing import Any
 from app.schemas.core import AgentStatus, ChangeSet, ExecutionResult, TaskSpec, task_prompt, utc_now
 
 from ..errors import (
+    InvalidStateTransitionError,
     InvalidTaskError,
     PermissionDeniedError,
     SessionNotFoundError,
     TaskAlreadyRunningError,
 )
-from ..git_ops.workspace import GitWorkspace, commit_changes, create_workspace
+from ..git_ops.workspace import (
+    GitWorkspace,
+    cleanup_workspace,
+    commit_changes,
+    create_workspace,
+)
 from ..log_stream import LogBroker
 from ..security.path_policy import validate_allowed_paths, validate_paths
 from .base import CodingAgentAdapter
@@ -235,11 +241,26 @@ class ExecutionService:
         task: TaskSpec,
         actor_id: str,
         message: str,
+        author_name: str = "TeamCode Agent",
+        author_email: str = "teamcode@localhost",
     ) -> str:
         self.authorize(actor_id, task)
-        return commit_changes(workspace, task.allowed_paths, message)
+        return commit_changes(
+            workspace,
+            task.allowed_paths,
+            message,
+            author_name=author_name,
+            author_email=author_email,
+        )
 
-    def commit_task(self, task_or_session_id: str, actor_id: str, message: str) -> str:
+    def commit_task(
+        self,
+        task_or_session_id: str,
+        actor_id: str,
+        message: str,
+        author_name: str = "TeamCode Agent",
+        author_email: str = "teamcode@localhost",
+    ) -> str:
         task = self.authorize_operation(actor_id, task_or_session_id)
         task_id = task.task_id
         if task_id not in self._task_workspaces:
@@ -248,4 +269,32 @@ class ExecutionService:
             self._task_workspaces[task_id],
             task.allowed_paths,
             message,
+            author_name=author_name,
+            author_email=author_email,
         )
+
+    async def cleanup(
+        self,
+        task_or_session_id: str,
+        actor_id: str,
+        delete_branch: bool = False,
+    ) -> None:
+        """Remove a finished task's worktree and clear its runtime state."""
+
+        task = self.authorize_operation(actor_id, task_or_session_id)
+        task_id = task.task_id
+        session_id = self._task_sessions.get(task_id)
+        if session_id is not None:
+            status = await self.sessions.get_status(session_id)
+            if not status.terminal:
+                raise InvalidStateTransitionError(
+                    f"session {session_id} is still {status.value}; terminate before cleanup"
+                )
+        workspace = self._task_workspaces.get(task_id)
+        if workspace is None:
+            raise SessionNotFoundError(task_or_session_id)
+        await asyncio.to_thread(cleanup_workspace, workspace, delete_branch)
+        self._task_workspaces.pop(task_id, None)
+        self._task_projects.pop(task_id, None)
+        self._task_sessions.pop(task_id, None)
+        self._task_specs.pop(task_id, None)

@@ -1,4 +1,5 @@
 import asyncio
+import os
 import subprocess
 import sys
 import tempfile
@@ -15,10 +16,16 @@ from app.errors import (
     InvalidStateTransitionError,
     InvalidTaskError,
     PermissionDeniedError,
+    SessionNotFoundError,
     TaskAlreadyRunningError,
     WorkspaceError,
 )
-from app.git_ops.workspace import collect_changes, commit_changes, create_workspace
+from app.git_ops.workspace import (
+    cleanup_workspace,
+    collect_changes,
+    commit_changes,
+    create_workspace,
+)
 from app.log_stream import LogBroker
 from app.schemas.core import AgentStatus, TaskSpec
 from app.security.path_policy import validate_paths
@@ -97,16 +104,23 @@ class PathPolicyTests(unittest.TestCase):
             self.assertTrue(any("absolute" in reason for _, reason in result.rejected))
             self.assertTrue(any("escapes project root" in reason for _, reason in result.rejected))
 
-    def test_allowed_directory_and_glob_are_case_insensitive(self):
+    def test_allowed_directory_and_glob_follow_filesystem_case(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
             result = validate_paths(
-                root,
+                Path(tmp),
                 ["SRC/app.py", "docs/api.md"],
                 ["src", "docs/**"],
             )
-            self.assertTrue(result.ok)
-            self.assertEqual(result.allowed, ("SRC/app.py", "docs/api.md"))
+            case_sensitive = os.path.normcase("A") != os.path.normcase("a")
+            if case_sensitive:
+                self.assertFalse(result.ok)
+                self.assertEqual(
+                    result.rejected,
+                    (("SRC/app.py", "path is outside allowed_paths"),),
+                )
+            else:
+                self.assertTrue(result.ok)
+                self.assertEqual(result.allowed, ("SRC/app.py", "docs/api.md"))
 
     def test_reserved_metadata_paths_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -212,6 +226,14 @@ class MockRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 manager.get_session(info.session_id).status,
                 AgentStatus.TERMINATED,
             )
+
+    async def test_pause_resume_reflects_adapter_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = MockAdapter()
+            manager = SessionManager()
+            info = await manager.start_session("p1", make_task(), Path(tmp), adapter)
+            self.assertEqual(await manager.pause(info.session_id), AgentStatus.PAUSED)
+            self.assertEqual(await manager.resume(info.session_id), AgentStatus.RUNNING)
 
 
 class ExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
@@ -335,6 +357,56 @@ class ExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
                     author_name="bad\nname",
                 )
 
+    async def test_cleanup_removes_worktree_after_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(Path(tmp) / "repo")
+            service = ExecutionService(
+                repo_root=repo,
+                sessions=SessionManager(),
+                leader_id="lead",
+            )
+            task = make_task()
+            result = await service.run(
+                "p1",
+                task,
+                actor_id="u1",
+                adapter=MockAdapter(),
+                context={"write_files": {"src/app.py": "x = 1\n"}},
+            )
+            self.assertTrue(result.ok)
+            worktree = Path(repo) / ".teamcode" / "worktrees" / "p1" / "t1"
+            self.assertTrue(worktree.exists())
+            await service.cleanup("t1", "u1")
+            self.assertFalse(worktree.exists())
+
+    async def test_cleanup_refuses_running_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(Path(tmp) / "repo")
+            service = ExecutionService(
+                repo_root=repo,
+                sessions=SessionManager(),
+                leader_id="lead",
+            )
+            task = make_task(task_id="t-running")
+            running = asyncio.create_task(
+                service.run(
+                    "p1",
+                    task,
+                    actor_id="u1",
+                    adapter=MockAdapter(delay=0.5),
+                    context={"write_files": {"src/app.py": "x = 1\n"}},
+                )
+            )
+            for _ in range(200):
+                try:
+                    await service.status("t-running", "u1")
+                    break
+                except SessionNotFoundError:
+                    await asyncio.sleep(0.02)
+            with self.assertRaises(InvalidStateTransitionError):
+                await service.cleanup("t-running", "u1")
+            await running
+
 
 class ExecutionAPITests(unittest.IsolatedAsyncioTestCase):
     async def test_api_error_codes_are_structured(self):
@@ -442,6 +514,46 @@ class GitWorkspaceTests(unittest.IsolatedAsyncioTestCase):
             repo = make_repo(Path(tmp) / "repo")
             with self.assertRaises(WorkspaceError):
                 create_workspace("p1", "t-branch", repo, base_branch="--help")
+
+    async def test_cleanup_workspace_removes_path_and_branch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(Path(tmp) / "repo")
+            workspace = create_workspace("p1", "t-cleanup", repo)
+            self.assertTrue(workspace.worktree_path.exists())
+            cleanup_workspace(workspace, delete_branch=True)
+            self.assertFalse(workspace.worktree_path.exists())
+            branch_check = subprocess.run(
+                [
+                    "git",
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    f"refs/heads/{workspace.branch_name}",
+                ],
+                cwd=str(repo),
+                check=False,
+            )
+            self.assertNotEqual(branch_check.returncode, 0)
+
+    async def test_commit_records_custom_author(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(Path(tmp) / "repo")
+            workspace = create_workspace("p1", "t-author", repo)
+            (workspace.worktree_path / "src").mkdir()
+            (workspace.worktree_path / "src" / "ok.py").write_text(
+                "x = 1\n", encoding="utf-8"
+            )
+            commit_changes(
+                workspace,
+                ("src/**",),
+                "custom author",
+                author_name="Alice",
+                author_email="alice@example.invalid",
+            )
+            author = run_git(
+                workspace.worktree_path, "log", "-1", "--pretty=%an <%ae>"
+            )
+            self.assertEqual(author.strip(), "Alice <alice@example.invalid>")
 
 
 class GitParsingTests(unittest.IsolatedAsyncioTestCase):
