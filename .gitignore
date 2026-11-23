@@ -32,3 +32,7 @@ coverage/
 *.sqlite3
 tasks/
 worktrees/
+
+# Local-only docs (do not publish)
+docs/c_mvp_review.md
+docs/演示流程.md
