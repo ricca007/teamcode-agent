@@ -231,6 +231,7 @@ class AgentLogRead(BaseModel):
     ts: datetime
     level: str
     message: str
+    sequence: int = 0
 
 
 class CodeChangeRead(ChangeSet):

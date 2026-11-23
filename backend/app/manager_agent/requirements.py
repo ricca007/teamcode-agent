@@ -1,4 +1,5 @@
 import re
+import unicodedata
 
 MODULE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
@@ -59,9 +60,11 @@ _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+|(?<=[。！？])|[\r\n]+")
 
 def normalize_requirements(requirements: str) -> list[str]:
     normalized: list[str] = []
+    seen: set[str] = set()
     for raw_part in _SENTENCE_BOUNDARY.split(requirements):
-        part = _LIST_PREFIX.sub("", raw_part).strip()
-        if part:
+        part = _normalize_text(_LIST_PREFIX.sub("", raw_part))
+        if part and part not in seen:
+            seen.add(part)
             normalized.append(part)
 
     if not normalized:
@@ -70,11 +73,11 @@ def normalize_requirements(requirements: str) -> list[str]:
 
 
 def classify_requirement(requirement: str) -> list[str]:
-    lowered = requirement.lower()
+    normalized = _normalize_text(requirement)
     modules = [
         module
         for module, keywords in MODULE_RULES
-        if any(_contains_keyword(lowered, keyword) for keyword in keywords)
+        if any(_contains_keyword(normalized, keyword) for keyword in keywords)
     ]
     return modules or ["core"]
 
@@ -89,7 +92,7 @@ def group_requirements(requirements: list[str]) -> dict[str, list[str]]:
         for module in modules:
             if module == "core":
                 continue
-            grouped.setdefault(module, []).append(requirement)
+            _append_unique(grouped.setdefault(module, []), requirement)
 
     if not grouped:
         grouped["core"] = unclassified
@@ -102,7 +105,21 @@ def ordered_modules(grouped: dict[str, list[str]]) -> list[str]:
 
 
 def _contains_keyword(requirement: str, keyword: str) -> bool:
-    if any(character.isascii() is False for character in keyword):
-        return keyword in requirement
-    pattern = rf"(?<![a-z0-9]){re.escape(keyword)}(?:s|es)?(?![a-z0-9])"
+    normalized_keyword = _normalize_text(keyword)
+    if any(character.isascii() is False for character in normalized_keyword):
+        return normalized_keyword in requirement
+    pattern = (
+        rf"(?<![a-z0-9]){re.escape(normalized_keyword)}"
+        rf"(?:s|es)?(?![a-z0-9])"
+    )
     return re.search(pattern, requirement) is not None
+
+
+def _normalize_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _append_unique(values: list[str], value: str) -> None:
+    if value not in values:
+        values.append(value)

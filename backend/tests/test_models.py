@@ -68,3 +68,11 @@ def test_models_expose_schema_compatible_aliases() -> None:
     assert task.depends_on == []
     assert session.session_id == "session_1"
     assert interface.interface_id == "interface_1"
+
+
+def test_agent_log_tracks_sequence() -> None:
+    table = Base.metadata.tables["agent_logs"]
+
+    assert table.c.sequence.nullable is False
+    assert table.c.sequence.server_default is not None
+    assert "ix_agent_logs_session_id_sequence" in {index.name for index in table.indexes}

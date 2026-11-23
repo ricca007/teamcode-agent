@@ -35,6 +35,7 @@ packages = [
   "app",
   "app.agent_runtime",
   "app.api",
+  "app.core",
   "app.git_ops",
   "app.interface_registry",
   "app.manager_agent",

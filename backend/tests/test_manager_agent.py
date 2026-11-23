@@ -2,6 +2,7 @@ from pathlib import Path
 
 from app.manager_agent import build_planning_graph, create_plan
 from app.manager_agent.requirements import classify_requirement, normalize_requirements
+from app.manager_agent.tasks import _area_matches, decompose_tasks, infer_dependencies
 from app.schemas import PlanningRequest, TeamMemberSpec
 
 
@@ -85,3 +86,28 @@ def test_chinese_requirements_are_split_and_classified() -> None:
     assert classify_requirement(requirements[1]) == ["user"]
     assert classify_requirement(requirements[2]) == ["product"]
     assert classify_requirement(requirements[3]) == ["order"]
+
+
+def test_core_task_uses_narrow_allowed_path() -> None:
+    tasks = infer_dependencies(
+        decompose_tasks(
+            project_id="project_core",
+            grouped={"core": ["Add a shared utility."]},
+            max_tasks=5,
+        )
+    )
+
+    assert tasks[0].allowed_paths == ["backend/app/core/"]
+
+
+def test_requirements_are_normalized_and_deduplicated() -> None:
+    requirements = normalize_requirements("- ＵＳＥＲ login\n- USER login\n- 用户登录。")
+
+    assert requirements == ["user login", "用户登录。"]
+    assert classify_requirement(requirements[0]) == ["user"]
+
+
+def test_area_matching_uses_exact_module_tokens() -> None:
+    assert _area_matches("user, order", "order") is True
+    assert _area_matches("orders", "order") is False
+    assert _area_matches("order-management", "order") is False
