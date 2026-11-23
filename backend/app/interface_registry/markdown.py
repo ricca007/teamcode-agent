@@ -14,13 +14,23 @@ from app.interface_registry.schemas import InterfaceInfo
 def format_signature(info: InterfaceInfo) -> str:
     """生成人类可读的函数签名。"""
     parts: list[str] = []
-    for param in info.params:
+    keyword_separator = False
+    for index, param in enumerate(info.params):
+        if param.kind == "keyword_only" and not keyword_separator:
+            parts.append("*")
+            keyword_separator = True
+        if param.name.startswith("*"):
+            keyword_separator = True
         text = param.name
         if param.annotation:
             text += f": {param.annotation}"
         if param.default is not None:
             text += f" = {param.default}"
         parts.append(text)
+        if param.kind == "positional_only" and (
+            index + 1 == len(info.params) or info.params[index + 1].kind != "positional_only"
+        ):
+            parts.append("/")
 
     if info.kind == "class":
         prefix = "class "

@@ -41,6 +41,7 @@ export interface ParamInfo {
   name: string;
   annotation: string | null;
   default: string | null;
+  kind?: "positional_only" | "positional_or_keyword" | "var_positional" | "keyword_only" | "var_keyword";
 }
 
 export interface InterfaceInfo {

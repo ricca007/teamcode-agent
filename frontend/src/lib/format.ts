@@ -63,18 +63,27 @@ export function shortHash(hash: string | null): string {
 }
 
 export function signatureOf(info: InterfaceInfo): string {
-  const params = info.params
-    .map((param) => {
+  const parts: string[] = [];
+  let keywordSeparator = false;
+  info.params.forEach((param, index) => {
+      if (param.kind === "keyword_only" && !keywordSeparator) {
+        parts.push("*");
+        keywordSeparator = true;
+      }
+      if (param.name.startsWith("*")) keywordSeparator = true;
       let text = param.name;
       if (param.annotation) {
         text += `: ${param.annotation}`;
       }
-      if (param.default !== null) {
+      if (param.default != null) {
         text += ` = ${param.default}`;
       }
-      return text;
-    })
-    .join(", ");
+      parts.push(text);
+      if (param.kind === "positional_only" && info.params[index + 1]?.kind !== "positional_only") {
+        parts.push("/");
+      }
+  });
+  const params = parts.join(", ");
 
   let prefix = "def ";
   if (info.kind === "class") {

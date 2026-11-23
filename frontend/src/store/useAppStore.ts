@@ -103,6 +103,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setProjects: (projects) => set({ projects }),
 
   selectProject: (project) => {
+    ++loadToken;
     window.localStorage.setItem("tc_project_id", project.id);
     set({
       projectId: project.id,
@@ -120,13 +121,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ selectedAgent: name });
   },
 
-  clearAuth: () =>
-    set({ role: null, userName: null, userId: null, projects: [] }),
+  clearAuth: () => {
+    ++loadToken;
+    set({ role: null, userName: null, userId: null, projects: [], ...emptyData });
+  },
 
   setProjectId: (projectId) => {
     if (projectId === get().projectId) {
       return;
     }
+    ++loadToken;
     set({
       projectId,
       ...emptyData,
@@ -194,9 +198,16 @@ export const useAppStore = create<AppState>((set, get) => ({
         const previous = state.tasks.find(
           (item) => item.task_id === task.task_id,
         );
+        if (state.role === "member" && task.owner_id && task.owner_id !== state.userId) {
+          if (previous) {
+            set((current) => ({ tasks: current.tasks.filter((item) => item.task_id !== task.task_id) }));
+            void get().load(true);
+          }
+          return;
+        }
         if (!previous) {
           // 队长刚把任务分配给当前成员：加入看板并拉取会话/日志
-          if (task.owner_id && task.owner_id === state.userId) {
+          if (state.role === "leader" || (task.owner_id && task.owner_id === state.userId)) {
             set((current) => ({ tasks: [...current.tasks, task] }));
             void get().load(true);
           }
@@ -235,8 +246,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
 
       case "interface.updated": {
+        const token = loadToken;
         void getInterfaces(state.projectId)
-          .then((interfaces) => set({ interfaces }))
+          .then((interfaces) => {
+            if (token === loadToken && get().projectId === state.projectId) {
+              set({ interfaces });
+            }
+          })
           .catch(() => {
             // 接口刷新失败不打断页面，下一次事件会重试
           });

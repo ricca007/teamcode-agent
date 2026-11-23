@@ -61,13 +61,16 @@ class _PythonChangeHandler(FileSystemEventHandler):
     def _handle(self, event: FileSystemEvent) -> None:
         if event.is_directory:
             return
-        path = Path(event.src_path)
-        if path.suffix != ".py":
-            return
-        try:
-            self._watcher.notify(path)
-        except Exception:
-            logger.exception("处理文件变更事件失败: %s", path)
+        # 编辑器常把临时文件原子重命名为 .py；移动的两端都可能影响接口。
+        paths = {event.src_path, getattr(event, "dest_path", "")}
+        for raw_path in paths:
+            path = Path(raw_path)
+            if not raw_path or path.suffix != ".py":
+                continue
+            try:
+                self._watcher.notify(path)
+            except Exception:
+                logger.exception("处理文件变更事件失败: %s", path)
 
 
 class InterfaceWatcher:

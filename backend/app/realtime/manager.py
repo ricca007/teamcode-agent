@@ -34,16 +34,21 @@ class ConnectionManager:
             dict
         )
         self._lock = asyncio.Lock()
+        self._member_ids: dict[WebSocket, str] = {}
 
     async def connect(
         self,
         project_id: str,
         websocket: WebSocket,
         allowed_task_ids: set[str] | None = None,
+        *,
+        user_id: str | None = None,
     ) -> None:
         await websocket.accept()
         async with self._lock:
             self._connections[project_id][websocket] = allowed_task_ids
+            if user_id is not None:
+                self._member_ids[websocket] = user_id
 
     async def disconnect(self, project_id: str, websocket: WebSocket) -> None:
         async with self._lock:
@@ -51,12 +56,26 @@ class ConnectionManager:
             if connections is None:
                 return
             connections.pop(websocket, None)
+            self._member_ids.pop(websocket, None)
             if not connections:
                 self._connections.pop(project_id, None)
 
     async def broadcast(self, project_id: str, event: dict[str, Any]) -> None:
         with_task = event.get("task_id")
         async with self._lock:
+            # 分配事件包含已提交的 owner_id；现有连接也必须同步任务访问范围。
+            if event.get("type") == "task.updated":
+                payload = event.get("payload") or {}
+                task = payload.get("task", payload)
+                task_id = task.get("task_id") or with_task
+                if task_id and "owner_id" in task:
+                    for socket, allowed in self._connections.get(project_id, {}).items():
+                        member_id = self._member_ids.get(socket)
+                        if allowed is not None and member_id is not None:
+                            if task["owner_id"] == member_id:
+                                allowed.add(str(task_id))
+                            else:
+                                allowed.discard(str(task_id))
             targets = list(self._connections.get(project_id, {}).items())
 
         dead: list[WebSocket] = []

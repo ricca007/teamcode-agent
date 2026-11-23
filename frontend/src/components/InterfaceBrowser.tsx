@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 
-import { API_BASE, errorMessage, refreshInterfaces } from "../api/client";
+import { downloadInterfaceMarkdown, errorMessage, refreshInterfaces } from "../api/client";
 import {
   KIND_LABEL,
   interfaceToMarkdown,
@@ -117,14 +117,15 @@ export function InterfaceBrowser() {
           >
             {scanning ? "扫描中" : "重新扫描"}
           </button>
-          <a
+          <button
+            type="button"
             className="btn btn--primary"
-            href={`${API_BASE}/api/projects/${encodeURIComponent(projectId)}/interfaces?format=markdown`}
-            target="_blank"
-            rel="noreferrer"
+            onClick={() => void downloadInterfaceMarkdown(projectId).catch(
+              (downloadError) => setNotice(errorMessage(downloadError)),
+            )}
           >
             下载 Markdown
-          </a>
+          </button>
         </div>
       </header>
 

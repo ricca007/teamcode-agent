@@ -75,9 +75,7 @@ class ExtractedInterface:
     ) -> InterfaceInfo:
         """转换为对外契约模型。"""
         return InterfaceInfo(
-            interface_id=make_interface_id(
-                project_id, self.file_path, self.name, self.kind
-            ),
+            interface_id=make_interface_id(project_id, self.file_path, self.name, self.kind),
             project_id=project_id,
             module=self.module,
             file_path=self.file_path,
@@ -133,9 +131,7 @@ def iter_python_files(
         for filename in sorted(filenames):
             if not filename.endswith(".py"):
                 continue
-            if not include_tests and (
-                filename.startswith("test_") or filename == "conftest.py"
-            ):
+            if not include_tests and (filename.startswith("test_") or filename == "conftest.py"):
                 continue
             yield Path(dirpath) / filename
 
@@ -194,22 +190,18 @@ def _build_params(node: ast.arguments, *, skip_receiver: bool = False) -> list[P
     defaults = list(node.defaults)
     offset = len(positional) - len(defaults)
 
-    if (
-        skip_receiver
-        and positional
-        and positional[0].arg in {"self", "cls"}
-    ):
-        positional = positional[1:]
-        # self/cls 通常没有默认值；若异常情况有，保守地放弃偏移
-        offset = max(offset - 1, 0)
-
     for index, arg in enumerate(positional):
+        if skip_receiver and index == 0 and arg.arg in {"self", "cls"}:
+            continue
         default = defaults[index - offset] if index >= offset else None
         params.append(
             ParamInfo(
                 name=arg.arg,
                 annotation=_annotation_to_str(arg.annotation),
                 default=_default_to_str(default),
+                kind="positional_only"
+                if index < len(node.posonlyargs)
+                else "positional_or_keyword",
             )
         )
 
@@ -218,6 +210,7 @@ def _build_params(node: ast.arguments, *, skip_receiver: bool = False) -> list[P
             ParamInfo(
                 name=f"*{node.vararg.arg}",
                 annotation=_annotation_to_str(node.vararg.annotation),
+                kind="var_positional",
             )
         )
 
@@ -227,6 +220,7 @@ def _build_params(node: ast.arguments, *, skip_receiver: bool = False) -> list[P
                 name=arg.arg,
                 annotation=_annotation_to_str(arg.annotation),
                 default=_default_to_str(default),
+                kind="keyword_only",
             )
         )
 
@@ -235,6 +229,7 @@ def _build_params(node: ast.arguments, *, skip_receiver: bool = False) -> list[P
             ParamInfo(
                 name=f"**{node.kwarg.arg}",
                 annotation=_annotation_to_str(node.kwarg.annotation),
+                kind="var_keyword",
             )
         )
 
@@ -300,7 +295,14 @@ class _InterfaceVisitor(ast.NodeVisitor):
                 module=self.module,
                 file_path=self.rel_path,
                 params=_build_params(
-                    node.args, skip_receiver=(scope_kind == "class")
+                    node.args,
+                    skip_receiver=(
+                        scope_kind == "class"
+                        and not any(
+                            isinstance(d, ast.Name) and d.id == "staticmethod"
+                            for d in node.decorator_list
+                        )
+                    ),
                 ),
                 returns=_annotation_to_str(node.returns),
                 docstring=ast.get_docstring(node, clean=True),
@@ -375,11 +377,10 @@ def extract_project(
     scanned_files: list[str] = []
     skipped_files: list[str] = []
 
-    for path in iter_python_files(
-        root, include_tests=include_tests, extra_excludes=extra_excludes
-    ):
+    for path in iter_python_files(root, include_tests=include_tests, extra_excludes=extra_excludes):
         rel = path.resolve().relative_to(root).as_posix()
-        digest = sha256_file(path)
+        # 提取格式升级后重新解析旧缓存，避免旧记录永久缺少参数 kind。
+        digest = f"signature-v2:{sha256_file(path)}"
         file_hashes[rel] = digest
 
         if hash_cache is not None and hash_cache.get(rel) == digest:
@@ -395,9 +396,7 @@ def extract_project(
                 hash_cache.set(rel, digest)
             continue
 
-        interfaces.extend(
-            item.to_interface_info(project_id) for item in items
-        )
+        interfaces.extend(item.to_interface_info(project_id) for item in items)
         scanned_files.append(rel)
         if hash_cache is not None:
             hash_cache.set(rel, digest)

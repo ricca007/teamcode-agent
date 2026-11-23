@@ -100,9 +100,7 @@ def test_tests_dir_skipped_by_default(sample_project: Path):
 def test_output_order_is_stable(sample_project: Path):
     first = extract_project(sample_project, "p_test")
     second = extract_project(sample_project, "p_test")
-    assert [i.interface_id for i in first.interfaces] == [
-        i.interface_id for i in second.interfaces
-    ]
+    assert [i.interface_id for i in first.interfaces] == [i.interface_id for i in second.interfaces]
     keys = [(i.module, i.lineno or 0, i.name) for i in first.interfaces]
     assert keys == sorted(keys)
 
@@ -122,7 +120,7 @@ def test_incremental_scan_only_rescans_changed_files(sample_project: Path):
     target = sample_project / "sample_pkg" / "user_service.py"
     target.write_text(
         target.read_text(encoding="utf-8")
-        + "\n\ndef added_by_test() -> None:\n    \"\"\"新增函数。\"\"\"\n    pass\n",
+        + '\n\ndef added_by_test() -> None:\n    """新增函数。"""\n    pass\n',
         encoding="utf-8",
     )
 
@@ -146,3 +144,23 @@ def test_extract_file_outside_root_raises(sample_project: Path, tmp_path: Path):
     outside.write_text("def f():\n    pass\n", encoding="utf-8")
     with pytest.raises(ExtractionError):
         extract_file(outside, sample_project)
+
+
+def test_signature_preserves_parameter_calling_conventions(tmp_path: Path):
+    from app.interface_registry.markdown import format_signature
+
+    source = tmp_path / "api.py"
+    source.write_text(
+        "def lookup(key: str, /, *, strict: bool = True) -> str: ...\n", encoding="utf-8"
+    )
+    info = extract_project(tmp_path, "p_test").interfaces[0]
+    assert format_signature(info) == "def lookup(key: str, /, *, strict: bool = True) -> str"
+
+
+def test_staticmethod_keeps_parameter_named_self(tmp_path: Path):
+    source = tmp_path / "api.py"
+    source.write_text(
+        "class API:\n    @staticmethod\n    def lookup(self: str): ...\n", encoding="utf-8"
+    )
+    info = _by_name(extract_project(tmp_path, "p_test").interfaces)["API.lookup"]
+    assert [param.name for param in info.params] == ["self"]

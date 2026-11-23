@@ -68,7 +68,7 @@ export class ApiError extends Error {
   }
 }
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+async function request(path: string, init?: RequestInit): Promise<Response> {
   let response: Response;
   const headers: Record<string, string> = { Accept: "application/json" };
   if (authToken) {
@@ -101,7 +101,29 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(message, response.status, code);
   }
 
-  return (await response.json()) as T;
+  return response;
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  return (await (await request(path, init)).json()) as T;
+}
+
+export async function getInterfaceMarkdown(projectId: string): Promise<string> {
+  const response = await request(
+    `/api/projects/${encodeURIComponent(projectId)}/interfaces?format=markdown`,
+    { headers: { Accept: "text/markdown" } },
+  );
+  return response.text();
+}
+
+export async function downloadInterfaceMarkdown(projectId: string): Promise<void> {
+  const markdown = await getInterfaceMarkdown(projectId);
+  const url = URL.createObjectURL(new Blob([markdown], { type: "text/markdown;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `interfaces-${projectId.replace(/[^a-zA-Z0-9_-]/g, "_")}.md`;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function pickArray<T>(value: unknown, key: string): T[] {

@@ -98,6 +98,20 @@ The client may send `ping`; the server responds with a `pong` event.
 | `CommitRequest` | optional `actor_id`; required `message` |
 | `RefreshRequest` | optional `root`; `include_tests` |
 
+### C compatibility fixes (2026-11-12)
+
+The shared A/B models and entry points stay unchanged. C's interface responses
+extend each parameter with optional `kind` (`positional_only`,
+`positional_or_keyword`, `var_positional`, `keyword_only`, `var_keyword`).
+Readers that ignore this additive field remain compatible; C uses it to preserve
+Python's `/` and `*` calling conventions in generated signatures. Legacy records
+default to `positional_or_keyword`. Log records return a monotonic `sequence`
+alongside `id`; the id format is `log_{session_id}_{sequence:06d}`.
+
+`is_async` and decorators participate in C's interface version comparison because
+they may change how callers invoke an interface. Line-number-only changes do not.
+Markdown downloads use the same Bearer authentication as JSON requests.
+
 ## Realtime Event Envelope
 
 ```json

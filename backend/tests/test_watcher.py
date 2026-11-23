@@ -6,11 +6,26 @@ import asyncio
 import logging
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from app.interface_registry import watcher as watcher_module
 from app.interface_registry.watcher import InterfaceWatcher, WatcherManager
+
+
+def test_atomic_save_move_notifies_python_destination(tmp_path: Path, monkeypatch):
+    watcher = InterfaceWatcher(project_id="p_test", root=tmp_path)
+    notified = []
+    monkeypatch.setattr(watcher, "notify", notified.append)
+    handler = watcher_module._PythonChangeHandler(watcher)
+    target = tmp_path / "api.py"
+    handler.on_moved(
+        SimpleNamespace(
+            is_directory=False, src_path=str(tmp_path / "api.py.tmp"), dest_path=str(target)
+        )
+    )
+    assert target in notified
 
 
 def _wait_until(predicate, timeout: float = 5.0) -> bool:
@@ -78,12 +93,8 @@ def test_watcher_degrades_without_watchdog(tmp_path: Path, monkeypatch):
     assert any("watchdog" in reason for reason in status["reasons"])
 
 
-@pytest.mark.skipif(
-    not watcher_module.WATCHDOG_AVAILABLE, reason="watchdog 未安装"
-)
-async def test_watcher_schedules_scan_on_main_loop(
-    session_factory, sample_project: Path
-):
+@pytest.mark.skipif(not watcher_module.WATCHDOG_AVAILABLE, reason="watchdog 未安装")
+async def test_watcher_schedules_scan_on_main_loop(session_factory, sample_project: Path):
     received: list[dict] = []
     manager = WatcherManager(publish=received.append)
     watcher = manager.start("p_test", sample_project, session_factory)
@@ -114,9 +125,7 @@ async def test_watcher_schedules_scan_on_main_loop(
         manager.stop_all()
 
 
-@pytest.mark.skipif(
-    not watcher_module.WATCHDOG_AVAILABLE, reason="watchdog 未安装"
-)
+@pytest.mark.skipif(not watcher_module.WATCHDOG_AVAILABLE, reason="watchdog 未安装")
 async def test_watcher_publish_failure_does_not_break_scan(
     session_factory, sample_project: Path, caplog
 ):
