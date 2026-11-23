@@ -7,6 +7,8 @@ services:
       uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://teamcode:teamcode@db:5432/teamcode}
+      TEAMCODE_REQUIRE_AUTH: ${TEAMCODE_REQUIRE_AUTH:-1}
+      TEAMCODE_AUTH_SECRET: ${TEAMCODE_AUTH_SECRET:-}
     ports:
       - "8000:8000"
     volumes:

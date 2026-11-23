@@ -20,7 +20,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.db import get_session
 from app.integration.agents import list_agents
-from app.integration.auth import Actor, auth_required, get_actor
+from app.integration.auth import (
+    Actor,
+    auth_required,
+    get_actor,
+    validate_auth_config,
+)
 from app.integration.models import ensure_integration_tables
 from app.integration.schemas import (
     ApiKeyCreate,
@@ -43,6 +48,8 @@ from app.interface_registry.logging_setup import configure_logging
 from app.models.project import Project
 
 configure_logging()
+# 启动即校验鉴权配置：开启鉴权却未配置 secret 时让进程快速失败（fail closed）。
+validate_auth_config()
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["integration"])
