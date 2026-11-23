@@ -67,7 +67,14 @@ def test_class_method_async_nested_and_decorator(sample_project: Path):
     assert method.returns == "dict | None"
     assert {p.name for p in method.params} == {"user_id", "include_deleted"}
 
-    nested = names["UserService.get_user._inner"]
+    # 默认跳过函数内部的嵌套定义，避免把局部工具函数当成对外接口。
+    assert "UserService.get_user._inner" not in names
+
+    nested_result = extract_project(
+        sample_project, "p_test", include_nested=True
+    )
+    nested_names = _by_name(nested_result.interfaces)
+    nested = nested_names["UserService.get_user._inner"]
     assert nested.kind == "function"
     assert nested.name == "UserService.get_user._inner"
     assert nested.returns == "dict"
