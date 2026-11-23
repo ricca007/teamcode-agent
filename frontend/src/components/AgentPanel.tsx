@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   controlTask,
   errorMessage,
+  RECENT_TASK_LIMIT,
   sendTaskMessage,
   type TaskAction,
 } from "../api/client";
@@ -25,7 +26,10 @@ export function AgentPanel() {
   const loading = useAppStore((state) => state.loading);
   const error = useAppStore((state) => state.error);
   const connection = useAppStore((state) => state.connection);
+  const detailTaskIds = useAppStore((state) => state.detailTaskIds);
+  const detailLoading = useAppStore((state) => state.detailLoading);
   const load = useAppStore((state) => state.load);
+  const loadMoreSessions = useAppStore((state) => state.loadMoreSessions);
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [follow, setFollow] = useState(true);
@@ -53,6 +57,11 @@ export function AgentPanel() {
 
   const taskTitle = (taskId: string) =>
     tasks.find((task) => task.task_id === taskId)?.title ?? taskId;
+
+  const loadedTaskIds = new Set(detailTaskIds);
+  const remainingTasks = tasks.filter(
+    (task) => !loadedTaskIds.has(task.task_id),
+  ).length;
 
   const handleControl = async (action: TaskAction) => {
     if (!activeSession) {
@@ -178,6 +187,19 @@ export function AgentPanel() {
                 })}
               </div>
             )}
+            <div className="panel__foot">
+              <p className="panel__hint">
+                仅自动加载最近 {RECENT_TASK_LIMIT} 个任务的会话与日志，更早的按需加载。
+              </p>
+              <button
+                type="button"
+                className="btn btn--ghost btn--tiny"
+                disabled={detailLoading || remainingTasks === 0}
+                onClick={() => void loadMoreSessions()}
+              >
+                {detailLoading ? "加载中…" : "加载更早会话"}
+              </button>
+            </div>
           </div>
 
           <div className="panel log-panel">

@@ -40,8 +40,12 @@ async function storeWithPendingRequests() {
   globalThis.__tcPending = pending;
   globalThis.__tcPendingInterfaces = pendingInterfaces;
   const clientUrl = moduleUrl(`
+    export const RECENT_TASK_LIMIT = 6;
     export const loadLiveBundle = () => new Promise(resolve => globalThis.__tcPending.push(resolve));
     export const getInterfaces = () => new Promise(resolve => globalThis.__tcPendingInterfaces.push(resolve));
+    export const loadTaskDetail = (taskId) => Promise.resolve({
+      taskId, session: null, logs: [], changes: [], warnings: [],
+    });
   `);
   let source = await readFile(new URL("../src/store/useAppStore.ts", import.meta.url), "utf8");
   source = source.replace('"zustand"', JSON.stringify(import.meta.resolve("zustand")))

@@ -569,6 +569,54 @@ export async function getTaskChanges(taskId: string): Promise<ChangeSet[]> {
   }));
 }
 
+/** 首屏自动探测的任务数量：更早的会话按需加载，避免一次性发出过多请求。 */
+export const RECENT_TASK_LIMIT = 6;
+
+/** 日志排序：先按时间，再按 sequence，保证同一时间戳的顺序稳定。 */
+export function compareLogs(a: LogEntry, b: LogEntry): number {
+  return a.ts.localeCompare(b.ts) || (a.sequence ?? 0) - (b.sequence ?? 0);
+}
+
+export interface TaskDetail {
+  taskId: string;
+  session: AgentSession | null;
+  logs: LogEntry[];
+  changes: ChangeSet[];
+  warnings: string[];
+}
+
+/** 拉取单个任务的会话、日志与变更；子请求失败只记录到 warnings。 */
+export async function loadTaskDetail(taskId: string): Promise<TaskDetail> {
+  const warnings: string[] = [];
+  const [sessionResult, logsResult, changesResult] = await Promise.allSettled([
+    getTaskStatus(taskId),
+    getTaskLogs(taskId),
+    getTaskChanges(taskId),
+  ]);
+
+  let session: AgentSession | null = null;
+  let logs: LogEntry[] = [];
+  let changes: ChangeSet[] = [];
+
+  if (sessionResult.status === "fulfilled") {
+    session = sessionResult.value;
+  } else {
+    warnings.push(`任务 ${taskId} 会话不可用：${errorMessage(sessionResult.reason)}`);
+  }
+  if (logsResult.status === "fulfilled") {
+    logs = logsResult.value;
+  } else {
+    warnings.push(`任务 ${taskId} 日志不可用：${errorMessage(logsResult.reason)}`);
+  }
+  if (changesResult.status === "fulfilled") {
+    changes = changesResult.value;
+  } else {
+    warnings.push(`任务 ${taskId} 变更不可用：${errorMessage(changesResult.reason)}`);
+  }
+
+  return { taskId, session, logs, changes, warnings };
+}
+
 export interface LiveBundle {
   tasks: Task[];
   sessions: AgentSession[];
@@ -605,29 +653,21 @@ export async function loadLiveBundle(projectId: string): Promise<LiveBundle> {
   }
 
   // 只探测最近的任务，避免页面初次加载发出过多请求
-  const candidates = tasks.slice(0, 6);
+  const candidates = tasks.slice(0, RECENT_TASK_LIMIT);
 
   await Promise.all(
     candidates.map(async (task) => {
-      const [sessionResult, logsResult, changesResult] = await Promise.allSettled([
-        getTaskStatus(task.task_id),
-        getTaskLogs(task.task_id),
-        getTaskChanges(task.task_id),
-      ]);
-
-      if (sessionResult.status === "fulfilled" && sessionResult.value) {
-        sessions.push(sessionResult.value);
+      const detail = await loadTaskDetail(task.task_id);
+      warnings.push(...detail.warnings);
+      if (detail.session) {
+        sessions.push(detail.session);
       }
-      if (logsResult.status === "fulfilled") {
-        logs.push(...logsResult.value);
-      }
-      if (changesResult.status === "fulfilled") {
-        changes.push(...changesResult.value);
-      }
+      logs.push(...detail.logs);
+      changes.push(...detail.changes);
     }),
   );
 
-  logs.sort((a, b) => a.ts.localeCompare(b.ts));
+  logs.sort(compareLogs);
   changes.sort((a, b) => b.ts.localeCompare(a.ts));
 
   return { tasks, sessions, logs, interfaces, changes, warnings };
