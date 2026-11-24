@@ -40,11 +40,11 @@ from app.agent_runtime.mock_adapter import MockAdapter
 from app.agent_runtime.session_manager import SessionManager
 from app.errors import WorkspaceError
 from app.git_ops.workspace import (
-    _validate_branch,  # TODO(B): promote to a public export.
     cleanup_workspace,
     collect_changes,
     commit_changes,
     create_workspace,
+    validate_branch_name,
 )
 from app.integration.agents import agent_specs, generic_wrapper_path
 from app.integration.auth import (
@@ -1202,8 +1202,8 @@ class IntegrationService:
         base = (request.base_branch or "main").strip()
         branch = task.branch_name or f"teamcode/{project.id}/{task.id}"
         try:
-            _validate_branch(base, "base_branch")
-            _validate_branch(branch, "branch")
+            validate_branch_name(base, "base_branch")
+            validate_branch_name(branch, "branch")
         except WorkspaceError as exc:
             raise IntegrationError(
                 "invalid_base_branch", f"非法分支名: {exc}", 400
