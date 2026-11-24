@@ -20,13 +20,14 @@ visibility.
 .
 ├── backend/
 │   ├── app/
-│   │   ├── api/
 │   │   ├── manager_agent/       # A: planning and replanning
 │   │   ├── agent_runtime/       # B: adapter and session runtime
 │   │   ├── git_ops/             # B: worktree and diff operations
 │   │   ├── security/            # B: path permission checks
 │   │   ├── interface_registry/  # C: AST extraction and registry
 │   │   ├── realtime/            # C: WebSocket event routing
+│   │   ├── integration/         # C: A/B/C orchestration and REST API
+│   │   ├── core/                # shared infrastructure
 │   │   ├── models/
 │   │   └── schemas/
 │   └── tests/
@@ -58,6 +59,45 @@ pip install -e ".[dev]"
 ruff check .
 pytest
 ```
+
+## End-to-End Demo
+
+`scripts/seed_demo_project.py` prepares a complete demo (leader account, plan,
+tasks, a mock-agent run, and scanned interfaces) against a local SQLite
+database:
+
+```bash
+# from the repository root, with the backend venv active
+python scripts/seed_demo_project.py --reset
+```
+
+It prints the project id (`p_demo`), the leader account and token, and the
+exact commands to start the API and frontend. In short:
+
+```bash
+# terminal 1: backend, pointed at the seeded SQLite database
+cd backend
+DATABASE_URL="sqlite+aiosqlite:////tmp/teamcode-demo.db" \
+  uvicorn app.main:app --reload --port 8000
+
+# terminal 2: frontend
+cd frontend
+npm run dev
+```
+
+Open `http://localhost:5173`, enter project id `p_demo`, and walk the full loop:
+submit requirements → review the plan → assign a task → run an agent → watch
+logs and diffs → commit and merge.
+
+## Team Ownership
+
+| Area | Owner |
+| --- | --- |
+| Manager Agent planning and planning API | A |
+| Agent runtime, Git operations, and permissions | B |
+| Interface registry, CLI, realtime, and frontend | C |
+| Integration layer (REST API + A/B/C orchestration) | C |
+| Shared models, schemas, and contracts | Shared; A maintains the initial version |
 
 ## Collaboration Rules
 

@@ -7,17 +7,12 @@ import unittest
 from pathlib import Path
 
 from app.agent_runtime.cli_adapter import CLIAdapter, CLIAdapterConfig
-from app.agent_runtime.execution import ExecutionService
 from app.agent_runtime.mock_adapter import MockAdapter
 from app.agent_runtime.session_manager import SessionManager
-from app.api.execution import ExecutionAPI
 from app.errors import (
     AdapterError,
     InvalidStateTransitionError,
-    InvalidTaskError,
     PermissionDeniedError,
-    SessionNotFoundError,
-    TaskAlreadyRunningError,
     WorkspaceError,
 )
 from app.git_ops.workspace import (
@@ -234,115 +229,18 @@ class MockRuntimeTests(unittest.IsolatedAsyncioTestCase):
             info = await manager.start_session("p1", make_task(), Path(tmp), adapter)
             self.assertEqual(await manager.pause(info.session_id), AgentStatus.PAUSED)
             self.assertEqual(await manager.resume(info.session_id), AgentStatus.RUNNING)
-
-
-class ExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
-    async def test_end_to_end_and_permission(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = make_repo(Path(tmp) / "repo")
-            manager = SessionManager()
-            service = ExecutionService(repo_root=repo, sessions=manager, leader_id="lead")
-            task = make_task()
-            result = await service.run(
-                "p1",
-                task,
-                actor_id="u1",
-                adapter=MockAdapter(),
-                context={"write_files": {"src/app.py": "def get_user():\n    return 1\n"}},
-            )
-            self.assertTrue(result.ok)
-            self.assertEqual(result.status, AgentStatus.SUCCEEDED)
-            self.assertEqual(result.changes.files, ["src/app.py"])
-            self.assertGreaterEqual(result.duration_ms, 0)
-            self.assertGreater(result.log_count, 0)
-            self.assertTrue(service.commit_task("t1", "u1", "implement user lookup"))
-
-            with self.assertRaises(PermissionDeniedError):
-                await service.run("p1", task, actor_id="someone-else", adapter=MockAdapter())
-
-            bad_task = make_task(allowed=("src/**",))
-            bad_result = await service.run(
-                "p1",
-                bad_task,
-                actor_id="lead",
-                adapter=MockAdapter(),
-                context={"write_files": {"outside.py": "print('bad')\n"}},
-            )
-            self.assertFalse(bad_result.ok)
-            self.assertEqual(bad_result.rejected_paths, ["outside.py"])
-
-    async def test_adapter_registry_selects_adapter(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            service = ExecutionService(
-                repo_root=make_repo(Path(tmp) / "repo"),
-                sessions=SessionManager(),
-                leader_id="lead",
-                adapter_registry={"mock": MockAdapter},
-            )
-            result = await service.run(
-                "p1",
-                make_task(task_id="t-registry"),
-                actor_id="u1",
-                adapter_name="mock",
-                context={"write_files": {"src/app.py": "x = 1\n"}},
-            )
-            self.assertTrue(result.ok)
-            with self.assertRaises(ValueError):
-                await service.run(
-                    "p1",
-                    make_task(task_id="t-registry-2"),
-                    actor_id="u1",
-                    adapter_name="missing",
-                )
-
-    async def test_service_rejects_same_task_id_across_projects(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            service = ExecutionService(
-                repo_root=make_repo(Path(tmp) / "repo"),
-                sessions=SessionManager(),
-                leader_id="lead",
-            )
-            task = make_task(task_id="t-shared-service")
-            await service.run("p1", task, actor_id="u1", adapter=MockAdapter())
-            with self.assertRaises(InvalidTaskError):
-                await service.run("p2", task, actor_id="u1", adapter=MockAdapter())
-
-    async def test_same_task_cannot_run_twice_concurrently(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = make_repo(Path(tmp) / "repo")
-            service = ExecutionService(
-                repo_root=repo,
-                sessions=SessionManager(),
-                leader_id="lead",
-            )
-            task = make_task()
-
-            async def run_one():
-                return await service.run(
-                    "p1",
-                    task,
-                    actor_id="u1",
-                    adapter=MockAdapter(delay=0.05),
-                    context={"write_files": {"src/app.py": "x = 1\n"}},
-                )
-
-            first, second = await asyncio.gather(
-                run_one(),
-                run_one(),
-                return_exceptions=True,
-            )
-            self.assertTrue(
-                any(isinstance(item, TaskAlreadyRunningError) for item in (first, second))
-            )
-            self.assertTrue(any(not isinstance(item, Exception) for item in (first, second)))
-
+class GitWorkspaceTests(unittest.IsolatedAsyncioTestCase):
     async def test_commit_gate_rejects_unauthorized_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = make_repo(Path(tmp) / "repo")
             workspace = create_workspace("p1", "t-commit", repo)
             (workspace.worktree_path / "src").mkdir()
-            (workspace.worktree_path / "src" / "ok.py").write_text("x = 1\n", encoding="utf-8")
-            (workspace.worktree_path / "bad.py").write_text("y = 2\n", encoding="utf-8")
+            (workspace.worktree_path / "src" / "ok.py").write_text(
+                "x = 1\n", encoding="utf-8"
+            )
+            (workspace.worktree_path / "bad.py").write_text(
+                "y = 2\n", encoding="utf-8"
+            )
             with self.assertRaises(PermissionDeniedError):
                 commit_changes(workspace, ("src/**",), "should fail")
 
@@ -357,143 +255,6 @@ class ExecutionServiceTests(unittest.IsolatedAsyncioTestCase):
                     author_name="bad\nname",
                 )
 
-    async def test_cleanup_removes_worktree_after_success(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = make_repo(Path(tmp) / "repo")
-            service = ExecutionService(
-                repo_root=repo,
-                sessions=SessionManager(),
-                leader_id="lead",
-            )
-            task = make_task()
-            result = await service.run(
-                "p1",
-                task,
-                actor_id="u1",
-                adapter=MockAdapter(),
-                context={"write_files": {"src/app.py": "x = 1\n"}},
-            )
-            self.assertTrue(result.ok)
-            worktree = Path(repo) / ".teamcode" / "worktrees" / "p1" / "t1"
-            self.assertTrue(worktree.exists())
-            await service.cleanup("t1", "u1")
-            self.assertFalse(worktree.exists())
-
-    async def test_cleanup_refuses_running_session(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = make_repo(Path(tmp) / "repo")
-            service = ExecutionService(
-                repo_root=repo,
-                sessions=SessionManager(),
-                leader_id="lead",
-            )
-            task = make_task(task_id="t-running")
-            running = asyncio.create_task(
-                service.run(
-                    "p1",
-                    task,
-                    actor_id="u1",
-                    adapter=MockAdapter(delay=0.5),
-                    context={"write_files": {"src/app.py": "x = 1\n"}},
-                )
-            )
-            for _ in range(200):
-                try:
-                    await service.status("t-running", "u1")
-                    break
-                except SessionNotFoundError:
-                    await asyncio.sleep(0.02)
-            with self.assertRaises(InvalidStateTransitionError):
-                await service.cleanup("t-running", "u1")
-            await running
-
-
-class ExecutionAPITests(unittest.IsolatedAsyncioTestCase):
-    async def test_api_error_codes_are_structured(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            service = ExecutionService(
-                repo_root=make_repo(Path(tmp) / "repo"),
-                sessions=SessionManager(),
-                leader_id="lead",
-            )
-            api = ExecutionAPI(service)
-            response = await api.status("missing-session", actor_id="lead")
-            self.assertFalse(response["ok"])
-            self.assertEqual(response["error"]["code"], "session_not_found")
-
-    async def test_task_conflict_maps_to_409_code(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            service = ExecutionService(
-                repo_root=make_repo(Path(tmp) / "repo"),
-                sessions=SessionManager(),
-                leader_id="lead",
-            )
-            task = make_task(task_id="t-conflict")
-            api = ExecutionAPI(service)
-            first = await api.run({
-                "project_id": "p1",
-                "actor_id": "u1",
-                "adapter": MockAdapter(),
-                "task": {
-                    "task_id": task.task_id,
-                    "owner_id": task.owner_id,
-                    "allowed_paths": list(task.allowed_paths),
-                },
-            })
-            second = await api.run({
-                "project_id": "p2",
-                "actor_id": "u1",
-                "adapter": MockAdapter(),
-                "task": {
-                    "task_id": task.task_id,
-                    "owner_id": task.owner_id,
-                    "allowed_paths": list(task.allowed_paths),
-                },
-            })
-            self.assertTrue(first["ok"])
-            self.assertFalse(second["ok"])
-            self.assertEqual(second["error"]["code"], "task_conflict")
-
-    async def test_non_owner_cannot_operate_task(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            service = ExecutionService(
-                repo_root=make_repo(Path(tmp) / "repo"),
-                sessions=SessionManager(),
-                leader_id="lead",
-            )
-            await service.run(
-                "p1",
-                make_task(),
-                actor_id="u1",
-                adapter=MockAdapter(),
-                context={"write_files": {"src/app.py": "x = 1\n"}},
-            )
-            response = await ExecutionAPI(service).status("t1", actor_id="intruder")
-            self.assertFalse(response["ok"])
-            self.assertEqual(response["error"]["code"], "permission_denied")
-
-    async def test_empty_commit_message_is_rejected(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            service = ExecutionService(
-                repo_root=make_repo(Path(tmp) / "repo"),
-                sessions=SessionManager(),
-                leader_id="lead",
-            )
-            task = make_task()
-            await service.run(
-                "p1",
-                task,
-                actor_id="u1",
-                adapter=MockAdapter(),
-                context={"write_files": {"src/app.py": "x = 1\n"}},
-            )
-            api = ExecutionAPI(service)
-            response = await api.commit("t1", "u1", "   ")
-            self.assertFalse(response["ok"])
-            self.assertEqual(response["error"]["code"], "git_error")
-
-
-class GitWorkspaceTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_task_id_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = make_repo(Path(tmp) / "repo")

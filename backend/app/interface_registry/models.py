@@ -1,14 +1,7 @@
 """C 负责的接口注册中心扩展表。
 
-为什么单独定义 metadata：
-- 公共表 ``interface_contracts`` 由 A 的 ``app.models`` 维护，本次适配
-  不修改他们的模型文件；
-- C 需要「内容哈希 / 软删除 / 行号 / 装饰器 / 是否 async」这些内部字段，
-  以及独立的版本快照表。把它们放在 C 自己的 metadata 下，既满足需求，
-  又不会影响 A 的 ``Base.metadata`` 与已有迁移测试。
-
-部署时由 Alembic 迁移建表；单测与 CLI 离线模式通过
-``ensure_registry_tables`` 懒建表。
+这些表已经合并进公共 ``Base.metadata``，由同一份 Alembic 迁移和同一个
+懒建表入口管理；``ensure_registry_tables`` 仍保留为幂等的懒建表入口。
 """
 
 from __future__ import annotations
@@ -21,7 +14,9 @@ from typing import Any
 
 from sqlalchemy import JSON, Boolean, DateTime, Integer, String
 from sqlalchemy.ext.asyncio import AsyncEngine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.models import Base
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +25,10 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-class InterfaceRegistryBase(DeclarativeBase):
-    """C 负责表的独立 metadata，避免污染公共 Base。"""
+class InterfaceRegistryBase(Base):
+    """C 负责表的声明基类（共享 ``Base.metadata``）。"""
+
+    __abstract__ = True
 
 
 class InterfaceState(InterfaceRegistryBase):

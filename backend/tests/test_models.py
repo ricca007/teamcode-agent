@@ -5,12 +5,19 @@ from app.models import AgentSession, Base, InterfaceContract, Task
 EXPECTED_TABLES = {
     "agent_logs",
     "agent_sessions",
+    "api_keys",
+    "auth_sessions",
     "code_changes",
     "interface_contracts",
+    "interface_registry_state",
+    "interface_versions",
+    "join_requests",
+    "plan_snapshots",
     "project_members",
     "projects",
     "task_dependencies",
     "tasks",
+    "user_credentials",
     "users",
 }
 

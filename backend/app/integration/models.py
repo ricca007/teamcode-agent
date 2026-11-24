@@ -1,9 +1,7 @@
-"""整合层自己的持久化模型。
+"""整合层的持久化模型。
 
-为什么不放进公共 ``app.models``：
-- A 的 ``test_models.py`` 对 ``Base.metadata.tables`` 做了精确断言；
-- 计划快照属于「整合层」而不是某一人的领域模型；
-- 使用独立 metadata 可以做到零侵入，后续若三人同意再合并。
+这些表已经合并进公共 ``Base.metadata``，与 A / B / C 共用同一套命名约定，
+由同一份 Alembic 迁移和同一个懒建表入口管理。
 """
 
 from __future__ import annotations
@@ -16,7 +14,9 @@ from typing import Any
 
 from sqlalchemy import JSON, DateTime, Integer, String, UniqueConstraint
 from sqlalchemy.ext.asyncio import AsyncEngine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.models import Base
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +25,10 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-class IntegrationBase(DeclarativeBase):
-    """整合层表的独立 metadata。"""
+class IntegrationBase(Base):
+    """整合层表的声明基类（共享 ``Base.metadata``）。"""
+
+    __abstract__ = True
 
 
 class ApiKey(IntegrationBase):
