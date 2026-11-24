@@ -52,7 +52,7 @@ def _validate_id(value: str, label: str) -> str:
     return value
 
 
-def _validate_branch(value: str, label: str) -> str:
+def validate_branch_name(value: str, label: str) -> str:
     value = str(value)
     if (
         not value
@@ -68,6 +68,11 @@ def _validate_branch(value: str, label: str) -> str:
     ):
         raise WorkspaceError(f"invalid {label}: {value}")
     return value
+
+
+# Backward-compatible alias for consumers that imported the private name
+# before it was promoted to the public API. Prefer ``validate_branch_name``.
+_validate_branch = validate_branch_name
 
 
 def _git_root(repo: Path) -> Path:
@@ -110,7 +115,7 @@ def create_workspace(
 
     project_id = _validate_id(str(project_id), "project_id")
     task_id = _validate_id(str(task_id), "task_id")
-    base_branch = _validate_branch(base_branch, "base_branch")
+    base_branch = validate_branch_name(base_branch, "base_branch")
     root = _git_root(Path(repo_root))
     if not _branch_exists(root, base_branch):
         raise WorkspaceError(f"base branch does not exist: {base_branch}")

@@ -515,6 +515,15 @@ class GitWorkspaceTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(WorkspaceError):
                 create_workspace("p1", "t-branch", repo, base_branch="--help")
 
+    def test_validate_branch_name_is_public(self):
+        from app.git_ops import validate_branch_name
+
+        self.assertEqual(validate_branch_name("main", "base"), "main")
+        self.assertEqual(validate_branch_name("feature/x-1", "base"), "feature/x-1")
+        for invalid in ("", "--help", "a..b", "a.lock", "a@{b}", "a b"):
+            with self.assertRaises(WorkspaceError):
+                validate_branch_name(invalid, "base")
+
     async def test_cleanup_workspace_removes_path_and_branch(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = make_repo(Path(tmp) / "repo")

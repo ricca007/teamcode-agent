@@ -6,7 +6,7 @@ API, event, or data structure, and notify all affected owners.
 ## REST API
 
 All routes below are mounted by `backend/app/main.py`. Authentication is
-enforced when `TEAMCODE_AUTH_REQUIRED` is enabled. API keys may be supplied as
+enforced when `TEAMCODE_REQUIRE_AUTH` is enabled. API keys may be supplied as
 an authorization token; the WebSocket also accepts `?token=...`.
 
 ### Identity And Teams
