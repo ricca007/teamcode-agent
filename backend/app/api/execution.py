@@ -1,4 +1,4 @@
-"""Framework-neutral execution API and optional FastAPI adapter."""
+"""Framework-neutral execution API facade for the agent runtime."""
 
 from __future__ import annotations
 
@@ -18,24 +18,6 @@ from ..errors import (
     TaskAlreadyRunningError,
     WorkspaceError,
 )
-
-
-def _http_status(response: dict[str, Any]) -> int:
-    if response.get("ok"):
-        return 200
-    code = response.get("error", {}).get("code")
-    return {
-        "permission_denied": 403,
-        "session_not_found": 404,
-        "session_already_exists": 409,
-        "task_already_running": 409,
-        "task_conflict": 409,
-        "invalid_state_transition": 409,
-        "invalid_request": 400,
-        "git_error": 400,
-        "adapter_error": 502,
-        "execution_error": 500,
-    }.get(code, 400)
 
 
 def _error_response(exc: Role2Error) -> dict[str, Any]:
@@ -62,9 +44,8 @@ class ExecutionAPI:
     """Synchronous request facade for B-4.
 
     Keeping the request handler framework-neutral lets the group test the task
-    execution chain before A introduces FastAPI. ``create_fastapi_router`` can
-    wrap this facade once FastAPI is available. The production HTTP surface is
-    now served by ``app.integration.api``; this module is retained for
+    execution chain independently of FastAPI. The production HTTP surface is
+    served by ``app.integration.api``; this module is retained for
     framework-neutral testing and as a reference contract.
     """
 
@@ -178,95 +159,3 @@ class ExecutionAPI:
             return {"ok": True, "task_or_session_id": task_or_session_id}
         except Role2Error as exc:
             return _error_response(exc)
-
-
-def create_fastapi_router(service: ExecutionService):
-    """Return a FastAPI router when FastAPI is installed.
-
-    This function is intentionally lazy so role-2 unit tests remain dependency
-    free. The router shape follows the paths in ``team_division.md``.
-    """
-
-    try:
-        from fastapi import APIRouter, HTTPException
-        from pydantic import BaseModel
-    except ImportError as exc:
-        raise RuntimeError("FastAPI and Pydantic are required for create_fastapi_router") from exc
-
-    class RunRequest(BaseModel):
-        project_id: str
-        actor_id: str
-        task: dict[str, Any]
-        adapter_name: str | None = None
-        prompt: str | None = None
-        context: dict[str, Any] | None = None
-
-    api = ExecutionAPI(service)
-    router = APIRouter()
-
-    @router.post("/api/tasks/{task_id}/run")
-    async def run_task(task_id: str, request: RunRequest):
-        payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
-        payload["task"]["task_id"] = task_id
-        response = await api.run(payload)
-        if not response["ok"]:
-            raise HTTPException(status_code=_http_status(response), detail=response["error"])
-        return response
-
-    @router.post("/api/tasks/{task_id}/pause")
-    async def pause_task(task_id: str, actor_id: str):
-        response = await api.pause(task_id, actor_id)
-        if not response["ok"]:
-            raise HTTPException(status_code=_http_status(response), detail=response["error"])
-        return response
-
-    @router.post("/api/tasks/{task_id}/resume")
-    async def resume_task(task_id: str, actor_id: str):
-        response = await api.resume(task_id, actor_id)
-        if not response["ok"]:
-            raise HTTPException(status_code=_http_status(response), detail=response["error"])
-        return response
-
-    @router.post("/api/tasks/{task_id}/terminate")
-    async def terminate_task(task_id: str, actor_id: str):
-        response = await api.terminate(task_id, actor_id)
-        if not response["ok"]:
-            raise HTTPException(status_code=_http_status(response), detail=response["error"])
-        return response
-
-    @router.get("/api/tasks/{task_id}/status")
-    async def task_status(task_id: str, actor_id: str):
-        response = await api.status(task_id, actor_id)
-        if not response["ok"]:
-            raise HTTPException(status_code=_http_status(response), detail=response["error"])
-        return response
-
-    @router.get("/api/tasks/{task_id}/logs")
-    async def task_logs(task_id: str, actor_id: str):
-        response = await api.logs(task_id, actor_id)
-        if not response["ok"]:
-            raise HTTPException(status_code=_http_status(response), detail=response["error"])
-        return response
-
-    @router.post("/api/tasks/{task_id}/commit")
-    async def commit_task(task_id: str, actor_id: str, payload: dict[str, Any]):
-        response = await api.commit(task_id, actor_id, str(payload.get("message", "")))
-        if not response["ok"]:
-            raise HTTPException(status_code=_http_status(response), detail=response["error"])
-        return response
-
-    @router.get("/api/tasks/{task_id}/changes")
-    async def task_changes(task_id: str, actor_id: str):
-        response = await api.changes(task_id, actor_id)
-        if not response["ok"]:
-            raise HTTPException(status_code=_http_status(response), detail=response["error"])
-        return response
-
-    @router.delete("/api/tasks/{task_id}/workspace")
-    async def cleanup_task(task_id: str, actor_id: str):
-        response = await api.cleanup(task_id, actor_id)
-        if not response["ok"]:
-            raise HTTPException(status_code=_http_status(response), detail=response["error"])
-        return response
-
-    return router

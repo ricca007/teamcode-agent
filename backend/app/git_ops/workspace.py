@@ -70,11 +70,6 @@ def validate_branch_name(value: str, label: str) -> str:
     return value
 
 
-# Backward-compatible alias for consumers that imported the private name
-# before it was promoted to the public API. Prefer ``validate_branch_name``.
-_validate_branch = validate_branch_name
-
-
 def _git_root(repo: Path) -> Path:
     repo = Path(repo).resolve()
     output = _run_git(repo, "rev-parse", "--show-toplevel")
