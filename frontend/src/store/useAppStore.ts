@@ -3,8 +3,11 @@ import { create } from "zustand";
 import {
   getInterfaces,
   loadLiveBundle,
+  loadTaskDetail as fetchTaskDetail,
+  RECENT_TASK_LIMIT,
   type AgentInfo,
   type ProjectSummary,
+  type TaskDetail,
 } from "../api/client";
 import type {
   AgentSession,
@@ -20,6 +23,9 @@ const DEFAULT_PROJECT_ID = import.meta.env.VITE_PROJECT_ID ?? "p_001";
 
 let loadToken = 0;
 
+/** 正在拉取详情的任务，避免「加载更早会话」重复请求。 */
+const detailInFlight = new Set<string>();
+
 /** 任务进入这些状态后，会话/日志/变更已经落库，重新拉取一次完整数据。 */
 const TERMINAL_TASK_STATUSES = new Set<Task["status"]>([
   "completed",
@@ -29,6 +35,45 @@ const TERMINAL_TASK_STATUSES = new Set<Task["status"]>([
 
 function logId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function compareLogs(a: LogEntry, b: LogEntry): number {
+  return a.ts.localeCompare(b.ts) || (a.sequence ?? 0) - (b.sequence ?? 0);
+}
+
+/** 把单个任务的详情合并进现有数据，按 id 去重。 */
+function applyDetail(
+  state: AppState,
+  detail: TaskDetail,
+): Pick<AppState, "sessions" | "logs" | "changes" | "detailTaskIds"> {
+  const sessions = detail.session
+    ? [
+        ...state.sessions.filter(
+          (item) => item.session_id !== detail.session?.session_id,
+        ),
+        detail.session,
+      ]
+    : state.sessions;
+
+  const knownLogIds = new Set(state.logs.map((log) => log.id));
+  const logs = [
+    ...state.logs,
+    ...detail.logs.filter((log) => !knownLogIds.has(log.id)),
+  ]
+    .sort(compareLogs)
+    .slice(-400);
+
+  const knownChangeIds = new Set(state.changes.map((change) => change.id));
+  const changes = [
+    ...state.changes,
+    ...detail.changes.filter((change) => !knownChangeIds.has(change.id)),
+  ].sort((a, b) => b.ts.localeCompare(a.ts));
+
+  const detailTaskIds = state.detailTaskIds.includes(detail.taskId)
+    ? state.detailTaskIds
+    : [...state.detailTaskIds, detail.taskId];
+
+  return { sessions, logs, changes, detailTaskIds };
 }
 
 export interface AppState {
@@ -45,6 +90,9 @@ export interface AppState {
   interfaces: InterfaceInfo[];
   changes: ChangeSet[];
   loading: boolean;
+  /** 已拉取详情（会话/日志/变更）的任务，用于按需加载更早会话。 */
+  detailTaskIds: string[];
+  detailLoading: boolean;
   error: string | null;
   connection: ConnectionState;
   interfaceQuery: string;
@@ -64,6 +112,8 @@ export interface AppState {
   clearAuth: () => void;
   setConnection: (connection: ConnectionState) => void;
   load: (silent?: boolean) => Promise<void>;
+  loadTaskDetail: (taskId: string) => Promise<void>;
+  loadMoreSessions: () => Promise<void>;
   handleEvent: (event: WSEvent) => void;
   appendLog: (entry: LogEntry) => void;
   setInterfaceQuery: (query: string) => void;
@@ -78,6 +128,8 @@ const emptyData = {
   interfaces: [] as InterfaceInfo[],
   changes: [] as ChangeSet[],
   selectedInterfaceId: null,
+  detailTaskIds: [] as string[],
+  detailLoading: false,
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -103,6 +155,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setProjects: (projects) => set({ projects }),
 
   selectProject: (project) => {
+    ++loadToken;
     window.localStorage.setItem("tc_project_id", project.id);
     set({
       projectId: project.id,
@@ -120,13 +173,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ selectedAgent: name });
   },
 
-  clearAuth: () =>
-    set({ role: null, userName: null, userId: null, projects: [] }),
+  clearAuth: () => {
+    ++loadToken;
+    set({ role: null, userName: null, userId: null, projects: [], ...emptyData });
+  },
 
   setProjectId: (projectId) => {
     if (projectId === get().projectId) {
       return;
     }
+    ++loadToken;
     set({
       projectId,
       ...emptyData,
@@ -155,6 +211,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         logs: live.logs,
         interfaces: live.interfaces,
         changes: live.changes,
+        detailTaskIds: live.tasks
+          .slice(0, RECENT_TASK_LIMIT)
+          .map((task) => task.task_id),
         loading: false,
         error:
           live.warnings.length > 0
@@ -172,6 +231,44 @@ export const useAppStore = create<AppState>((set, get) => ({
         loading: false,
         error: error instanceof Error ? error.message : "加载项目数据失败",
       });
+    }
+  },
+
+  loadTaskDetail: async (taskId) => {
+    if (detailInFlight.has(taskId)) {
+      return;
+    }
+    const token = loadToken;
+    const projectId = get().projectId;
+    detailInFlight.add(taskId);
+    try {
+      const detail = await fetchTaskDetail(taskId);
+      if (token !== loadToken || get().projectId !== projectId) {
+        return;
+      }
+      set((state) => applyDetail(state, detail));
+    } finally {
+      detailInFlight.delete(taskId);
+    }
+  },
+
+  loadMoreSessions: async () => {
+    const state = get();
+    if (state.detailLoading) {
+      return;
+    }
+    const loaded = new Set(state.detailTaskIds);
+    const remaining = state.tasks.filter((task) => !loaded.has(task.task_id));
+    if (remaining.length === 0) {
+      return;
+    }
+    set({ detailLoading: true });
+    try {
+      await Promise.all(
+        remaining.map((task) => get().loadTaskDetail(task.task_id)),
+      );
+    } finally {
+      set({ detailLoading: false });
     }
   },
 
@@ -194,9 +291,16 @@ export const useAppStore = create<AppState>((set, get) => ({
         const previous = state.tasks.find(
           (item) => item.task_id === task.task_id,
         );
+        if (state.role === "member" && task.owner_id && task.owner_id !== state.userId) {
+          if (previous) {
+            set((current) => ({ tasks: current.tasks.filter((item) => item.task_id !== task.task_id) }));
+            void get().load(true);
+          }
+          return;
+        }
         if (!previous) {
           // 队长刚把任务分配给当前成员：加入看板并拉取会话/日志
-          if (task.owner_id && task.owner_id === state.userId) {
+          if (state.role === "leader" || (task.owner_id && task.owner_id === state.userId)) {
             set((current) => ({ tasks: [...current.tasks, task] }));
             void get().load(true);
           }
@@ -235,8 +339,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
 
       case "interface.updated": {
+        const token = loadToken;
         void getInterfaces(state.projectId)
-          .then((interfaces) => set({ interfaces }))
+          .then((interfaces) => {
+            if (token === loadToken && get().projectId === state.projectId) {
+              set({ interfaces });
+            }
+          })
           .catch(() => {
             // 接口刷新失败不打断页面，下一次事件会重试
           });

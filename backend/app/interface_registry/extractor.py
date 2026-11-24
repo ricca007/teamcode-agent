@@ -75,9 +75,7 @@ class ExtractedInterface:
     ) -> InterfaceInfo:
         """转换为对外契约模型。"""
         return InterfaceInfo(
-            interface_id=make_interface_id(
-                project_id, self.file_path, self.name, self.kind
-            ),
+            interface_id=make_interface_id(project_id, self.file_path, self.name, self.kind),
             project_id=project_id,
             module=self.module,
             file_path=self.file_path,
@@ -133,9 +131,7 @@ def iter_python_files(
         for filename in sorted(filenames):
             if not filename.endswith(".py"):
                 continue
-            if not include_tests and (
-                filename.startswith("test_") or filename == "conftest.py"
-            ):
+            if not include_tests and (filename.startswith("test_") or filename == "conftest.py"):
                 continue
             yield Path(dirpath) / filename
 
@@ -194,22 +190,18 @@ def _build_params(node: ast.arguments, *, skip_receiver: bool = False) -> list[P
     defaults = list(node.defaults)
     offset = len(positional) - len(defaults)
 
-    if (
-        skip_receiver
-        and positional
-        and positional[0].arg in {"self", "cls"}
-    ):
-        positional = positional[1:]
-        # self/cls 通常没有默认值；若异常情况有，保守地放弃偏移
-        offset = max(offset - 1, 0)
-
     for index, arg in enumerate(positional):
+        if skip_receiver and index == 0 and arg.arg in {"self", "cls"}:
+            continue
         default = defaults[index - offset] if index >= offset else None
         params.append(
             ParamInfo(
                 name=arg.arg,
                 annotation=_annotation_to_str(arg.annotation),
                 default=_default_to_str(default),
+                kind="positional_only"
+                if index < len(node.posonlyargs)
+                else "positional_or_keyword",
             )
         )
 
@@ -218,6 +210,7 @@ def _build_params(node: ast.arguments, *, skip_receiver: bool = False) -> list[P
             ParamInfo(
                 name=f"*{node.vararg.arg}",
                 annotation=_annotation_to_str(node.vararg.annotation),
+                kind="var_positional",
             )
         )
 
@@ -227,6 +220,7 @@ def _build_params(node: ast.arguments, *, skip_receiver: bool = False) -> list[P
                 name=arg.arg,
                 annotation=_annotation_to_str(arg.annotation),
                 default=_default_to_str(default),
+                kind="keyword_only",
             )
         )
 
@@ -235,6 +229,7 @@ def _build_params(node: ast.arguments, *, skip_receiver: bool = False) -> list[P
             ParamInfo(
                 name=f"**{node.kwarg.arg}",
                 annotation=_annotation_to_str(node.kwarg.annotation),
+                kind="var_keyword",
             )
         )
 
@@ -252,9 +247,17 @@ def _class_init_params(node: ast.ClassDef) -> list[ParamInfo]:
 class _InterfaceVisitor(ast.NodeVisitor):
     """按作用域栈记录限定名与类型（function / method / class）。"""
 
-    def __init__(self, module: str, rel_path: str):
+    def __init__(
+        self,
+        module: str,
+        rel_path: str,
+        *,
+        include_nested: bool = False,
+    ):
         self.module = module
         self.rel_path = rel_path
+        # 默认跳过函数内部定义（含其整棵子树），避免把局部工具函数当成对外接口。
+        self.include_nested = include_nested
         # 栈元素：(名称, 作用域种类)
         self._stack: list[tuple[str, str]] = []
         self.items: list[ExtractedInterface] = []
@@ -265,7 +268,16 @@ class _InterfaceVisitor(ast.NodeVisitor):
     def _kind_for(self, scope_kind: str | None) -> str:
         return "method" if scope_kind == "class" else "function"
 
+    def _in_skipped_function(self) -> bool:
+        return (
+            not self.include_nested
+            and bool(self._stack)
+            and self._stack[-1][1] == "function"
+        )
+
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        if self._in_skipped_function():
+            return
         self.items.append(
             ExtractedInterface(
                 name=self._qualified_name(node.name),
@@ -287,6 +299,8 @@ class _InterfaceVisitor(ast.NodeVisitor):
     def _visit_function(
         self, node: ast.FunctionDef | ast.AsyncFunctionDef, *, is_async: bool
     ) -> None:
+        if self._in_skipped_function():
+            return
         scope_kind = self._stack[-1][1] if self._stack else None
 
         # 类条目已经用 __init__ 的签名表达构造参数，不再重复注册该方法
@@ -300,7 +314,14 @@ class _InterfaceVisitor(ast.NodeVisitor):
                 module=self.module,
                 file_path=self.rel_path,
                 params=_build_params(
-                    node.args, skip_receiver=(scope_kind == "class")
+                    node.args,
+                    skip_receiver=(
+                        scope_kind == "class"
+                        and not any(
+                            isinstance(d, ast.Name) and d.id == "staticmethod"
+                            for d in node.decorator_list
+                        )
+                    ),
                 ),
                 returns=_annotation_to_str(node.returns),
                 docstring=ast.get_docstring(node, clean=True),
@@ -320,7 +341,12 @@ class _InterfaceVisitor(ast.NodeVisitor):
         self._visit_function(node, is_async=True)
 
 
-def extract_file(path: str | Path, project_root: str | Path) -> list[ExtractedInterface]:
+def extract_file(
+    path: str | Path,
+    project_root: str | Path,
+    *,
+    include_nested: bool = False,
+) -> list[ExtractedInterface]:
     """提取单个文件。解析失败时抛出 ExtractionError。"""
     path = Path(path)
     root = Path(project_root).resolve()
@@ -339,6 +365,7 @@ def extract_file(path: str | Path, project_root: str | Path) -> list[ExtractedIn
     visitor = _InterfaceVisitor(
         module=module_name_for(rel_path),
         rel_path=rel_path.as_posix(),
+        include_nested=include_nested,
     )
     visitor.visit(tree)
     # 类内部会重复访问方法：visitor 已经按栈去重，无需额外处理
@@ -357,6 +384,7 @@ def extract_project(
     include_tests: bool = False,
     extra_excludes: set[str] | frozenset[str] | None = None,
     hash_cache: HashCache | None = None,
+    include_nested: bool = False,
 ) -> ExtractionResult:
     """扫描整个项目。
 
@@ -375,11 +403,10 @@ def extract_project(
     scanned_files: list[str] = []
     skipped_files: list[str] = []
 
-    for path in iter_python_files(
-        root, include_tests=include_tests, extra_excludes=extra_excludes
-    ):
+    for path in iter_python_files(root, include_tests=include_tests, extra_excludes=extra_excludes):
         rel = path.resolve().relative_to(root).as_posix()
-        digest = sha256_file(path)
+        # 提取格式升级后重新解析旧缓存；v3 默认跳过嵌套函数。
+        digest = f"signature-v3:{sha256_file(path)}"
         file_hashes[rel] = digest
 
         if hash_cache is not None and hash_cache.get(rel) == digest:
@@ -387,7 +414,7 @@ def extract_project(
             continue
 
         try:
-            items = extract_file(path, root)
+            items = extract_file(path, root, include_nested=include_nested)
         except ExtractionError as exc:
             # 语法错误不中断整体扫描；同时缓存该文件哈希，避免每次重复报错
             warnings.append({"file": rel, "error": str(exc)})
@@ -395,9 +422,7 @@ def extract_project(
                 hash_cache.set(rel, digest)
             continue
 
-        interfaces.extend(
-            item.to_interface_info(project_id) for item in items
-        )
+        interfaces.extend(item.to_interface_info(project_id) for item in items)
         scanned_files.append(rel)
         if hash_cache is not None:
             hash_cache.set(rel, digest)

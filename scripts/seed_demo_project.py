@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -40,6 +41,20 @@ REQUIREMENTS = (
     "在线商城：用户管理、商品管理、订单管理、优惠券功能，"
     "以及实时接口文档和前端控制台。"
 )
+
+DEMO_EMAIL = "leader@demo.invalid"
+
+
+def _seed_password() -> tuple[str, bool]:
+    """返回 (演示密码, 是否来自环境变量)。
+
+    优先读取 ``TEAMCODE_SEED_PASSWORD``；未设置时随机生成一次，
+    避免脚本里硬编码的弱口令进入演示库。
+    """
+    env_password = os.getenv("TEAMCODE_SEED_PASSWORD", "").strip()
+    if env_password:
+        return env_password, True
+    return secrets.token_urlsafe(12), False
 
 
 def _remove_sqlite_file(db_url: str) -> None:
@@ -148,11 +163,12 @@ async def seed(
                 )
                 return
 
+            password, password_from_env = _seed_password()
             registration = await service.register(
                 RegisterRequest(
                     name="演示负责人",
-                    email="leader@demo.invalid",
-                    password="demo123456",
+                    email=DEMO_EMAIL,
+                    password=password,
                 )
             )
             leader_token = registration["token"]
@@ -213,7 +229,13 @@ async def seed(
 
         print("演示数据已准备")
         print(f"  项目 ID：{project_id}")
-        print("  队长账号：leader@demo.invalid / demo123456")
+        if password_from_env:
+            print(
+                f"  队长账号：{DEMO_EMAIL}（密码来自 TEAMCODE_SEED_PASSWORD，未回显）"
+            )
+        else:
+            print(f"  队长账号：{DEMO_EMAIL} / {password}")
+            print("  注意：该密码为随机生成，请首次登录后立即修改。")
         print(f"  队长 Token：{leader_token}")
         print(f"  仓库路径：{repo_path}")
         print(f"  数据库：{db_url}")

@@ -31,9 +31,33 @@ from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_AUTH_SECRET = "teamcode-dev-secret"
+
 
 def auth_required() -> bool:
     return os.getenv("TEAMCODE_REQUIRE_AUTH", "1") != "0"
+
+
+def auth_secret() -> str:
+    """返回用于派生 join token 的密钥。
+
+    开启鉴权时必须显式配置一个足够随机的 ``TEAMCODE_AUTH_SECRET``，
+    否则派生 token 可被预测（fail closed）。关闭鉴权时保留开发默认值，
+    便于 pytest / seed 脚本在本地工作。
+    """
+    secret = os.getenv("TEAMCODE_AUTH_SECRET", "").strip()
+    if auth_required() and (not secret or secret == DEFAULT_AUTH_SECRET):
+        raise RuntimeError(
+            "TEAMCODE_AUTH_SECRET 未配置或使用默认值。开启鉴权时请在环境变量"
+            "（或 docker-compose 的 api 服务）中设置一个足够长的随机字符串；"
+            "本地开发可设置 TEAMCODE_REQUIRE_AUTH=0 关闭鉴权。"
+        )
+    return secret or DEFAULT_AUTH_SECRET
+
+
+def validate_auth_config() -> None:
+    """启动时校验鉴权配置；不合法时抛出 ``RuntimeError`` 让进程退出。"""
+    auth_secret()
 
 
 def hash_secret(value: str) -> str:
@@ -45,7 +69,7 @@ def new_token() -> str:
 
 
 def derive_join_token(request_id: str, device_secret: str) -> str:
-    secret = os.getenv("TEAMCODE_AUTH_SECRET", "teamcode-dev-secret")
+    secret = auth_secret()
     digest = hmac.new(
         secret.encode("utf-8"),
         f"{request_id}:{device_secret}".encode(),

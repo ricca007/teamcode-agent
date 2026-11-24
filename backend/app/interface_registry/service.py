@@ -44,8 +44,7 @@ logger = logging.getLogger(__name__)
 def interface_content_hash(info: InterfaceInfo) -> str:
     """接口「内容」哈希。
 
-    刻意排除 lineno / decorators / is_async 等展示字段：代码上下移动或
-    加装饰器不应被视为接口契约变更。只有签名、返回值和说明变化才升版本。
+    排除行号等位置字段；async 与装饰器可能改变调用方式，属于契约变化。
     """
     payload = {
         "module": info.module,
@@ -54,6 +53,8 @@ def interface_content_hash(info: InterfaceInfo) -> str:
         "params": [p.model_dump() for p in info.params],
         "returns": info.returns,
         "docstring": info.docstring,
+        "is_async": info.is_async,
+        "decorators": info.decorators,
     }
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -246,7 +247,6 @@ class InterfaceRegistryService:
             include_tests=include_tests,
             hash_cache=cache,
         )
-        cache.save()
 
         if result.warnings:
             skipped = ", ".join(
@@ -296,7 +296,9 @@ class InterfaceRegistryService:
                 summary.added.append(contract.id)
             else:
                 contract, state = pair
-                if state.is_deleted or state.content_hash != content_hash:
+                # 从持久化的契约重算，兼容旧哈希格式，避免升级时所有接口虚增版本。
+                previous_hash = interface_content_hash(self._to_info(contract, state))
+                if state.is_deleted or previous_hash != content_hash:
                     # 内容变化或从删除状态恢复：版本 +1
                     contract.version += 1
                     state.is_deleted = False
@@ -332,6 +334,13 @@ class InterfaceRegistryService:
             summary.deleted.append(contract.id)
 
         await self.db.commit()
+
+        # 缓存只记录已提交的结果；否则事务失败后重试会跳过尚未落库的文件。
+        try:
+            cache.save()
+        except OSError:
+            # 缓存只是优化，写入失败时下次重新解析，不能让已成功的事务报失败。
+            logger.warning("接口缓存保存失败，下次扫描将重新解析: %s", cache_path, exc_info=True)
 
         summary.total_interfaces = int(
             await self.db.scalar(

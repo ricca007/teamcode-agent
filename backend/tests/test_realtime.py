@@ -79,3 +79,18 @@ def test_dead_connection_is_dropped():
     asyncio.run(manager.connect("p_001", broken))
     asyncio.run(manager.broadcast("p_001", {"type": "interface.updated"}))
     assert manager.count("p_001") == 0
+
+
+async def test_reassignment_updates_live_member_log_permissions():
+    manager = ConnectionManager()
+    old_owner = FakeWebSocket()
+    new_owner = FakeWebSocket()
+    await manager.connect("p_001", old_owner, {"t1"}, user_id="old")
+    await manager.connect("p_001", new_owner, set(), user_id="new")
+    await manager.broadcast("p_001", make_event(
+        "task.updated", "p_001", {"task_id": "t1", "owner_id": "new"}, task_id="t1"
+    ))
+    event = make_event("agent.log", "p_001", {"message": "private"}, task_id="t1")
+    await manager.broadcast("p_001", event)
+    assert not any(item["type"] == "agent.log" for item in old_owner.sent)
+    assert new_owner.sent[-1] == event

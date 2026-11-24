@@ -31,14 +31,21 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.agent_runtime.cli_adapter import CLIAdapter, CLIAdapterConfig
 from app.agent_runtime.mock_adapter import MockAdapter
 from app.agent_runtime.session_manager import SessionManager
-from app.git_ops.workspace import collect_changes, commit_changes, create_workspace
+from app.errors import WorkspaceError
+from app.git_ops.workspace import (
+    _validate_branch,  # TODO(B): promote to a public export.
+    cleanup_workspace,
+    collect_changes,
+    commit_changes,
+    create_workspace,
+)
 from app.integration.agents import agent_specs, generic_wrapper_path
 from app.integration.auth import (
     Actor,
@@ -122,6 +129,33 @@ class ProjectRuntime:
 
 
 _runtimes: dict[str, ProjectRuntime] = {}
+
+# 每个 session 一把锁，保证日志 sequence 在单进程内单调递增且 id 稳定。
+# 课程演示部署为单 worker；多 worker 部署需要改用数据库序列或唯一约束重试。
+# 历史行 sequence 默认为 0，会排在最前面，不做回填。
+_session_log_locks: dict[str, asyncio.Lock] = {}
+
+
+def _session_log_lock(session_id: str) -> asyncio.Lock:
+    lock = _session_log_locks.get(session_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _session_log_locks[session_id] = lock
+    return lock
+
+
+def _log_id(session_id: str, sequence: int) -> str:
+    return f"log_{session_id}_{sequence:06d}"
+
+
+async def _next_sequence(db: AsyncSession, session_id: str) -> int:
+    """返回该 session 下一条日志应使用的 sequence（当前最大值 + 1）。"""
+    current = await db.scalar(
+        select(func.coalesce(func.max(AgentLogModel.sequence), 0)).where(
+            AgentLogModel.session_id == session_id
+        )
+    )
+    return int(current or 0) + 1
 
 
 async def shutdown_runtimes() -> None:
@@ -1005,11 +1039,17 @@ class IntegrationService:
         session = await self._latest_session(task.id)
         if session is None:
             return []
+        # sequence 是唯一排序键：同一时间戳的多条日志按写入顺序稳定返回。
+        # 历史行 sequence=0 会排在最前面（不回填）。
         rows = (
             await self.db.scalars(
                 select(AgentLogModel)
                 .where(AgentLogModel.session_id == session.id)
-                .order_by(AgentLogModel.ts, AgentLogModel.id)
+                .order_by(
+                    AgentLogModel.sequence,
+                    AgentLogModel.ts,
+                    AgentLogModel.id,
+                )
             )
         ).all()
         return [
@@ -1020,9 +1060,9 @@ class IntegrationService:
                 "ts": row.ts.isoformat(),
                 "level": row.level,
                 "message": row.message,
-                "sequence": index,
+                "sequence": row.sequence,
             }
-            for index, row in enumerate(rows)
+            for row in rows
         ]
 
     async def task_changes(
@@ -1150,18 +1190,24 @@ class IntegrationService:
                 "workspace_missing", "任务 Worktree 不存在", 409
             )
 
+        # 运行中的任务不能合并：清理会删掉正在被 Agent 使用的 Worktree。
+        runtime = _runtimes.get(project_id)
+        if runtime is not None and task.id in runtime.active_tasks:
+            raise IntegrationError(
+                "task_running", "任务仍在运行，请结束后再合并", 409
+            )
+
         project = await self._get_project(project_id)
         repo_root = Path(project.repo_path).resolve()
         base = (request.base_branch or "main").strip()
-        if (
-            not re.fullmatch(r"[A-Za-z0-9._/-]+", base)
-            or base.startswith("-")
-            or ".." in base
-        ):
-            raise IntegrationError(
-                "invalid_base_branch", f"非法的主分支名: {base}", 400
-            )
         branch = task.branch_name or f"teamcode/{project.id}/{task.id}"
+        try:
+            _validate_branch(base, "base_branch")
+            _validate_branch(branch, "branch")
+        except WorkspaceError as exc:
+            raise IntegrationError(
+                "invalid_base_branch", f"非法分支名: {exc}", 400
+            ) from exc
         workspace = GitWorkspace(
             project_id=project.id,
             task_id=task.id,
@@ -1211,6 +1257,23 @@ class IntegrationService:
         # 3) 重扫接口注册表并推送
         interface_summary = await self._refresh_registry_after_merge(project)
 
+        # 4) 清理已合并的 Worktree；清理失败只告警，不影响合并结果。
+        # 默认保留分支，便于回溯；设置 TEAMCODE_MERGE_DELETE_BRANCH=1 时一并删除。
+        delete_branch = os.getenv("TEAMCODE_MERGE_DELETE_BRANCH", "0") == "1"
+        workspace_cleaned = False
+        workspace_cleanup_error: str | None = None
+        try:
+            await asyncio.to_thread(cleanup_workspace, workspace, delete_branch)
+            workspace_cleaned = True
+        except Exception as exc:
+            workspace_cleanup_error = str(exc)
+            logger.warning(
+                "合并后清理 Worktree 失败: project=%s task=%s %s",
+                project.id,
+                task.id,
+                exc,
+            )
+
         logger.info(
             "任务已合并: project=%s task=%s branch=%s base=%s merge=%s",
             project.id,
@@ -1226,6 +1289,8 @@ class IntegrationService:
             "commit_hash": commit_hash,
             "merge_commit": merge_commit,
             "interfaces": interface_summary,
+            "workspace_cleaned": workspace_cleaned,
+            "workspace_cleanup_error": workspace_cleanup_error,
         }
 
     @staticmethod
@@ -1633,20 +1698,25 @@ class IntegrationService:
         level: str,
         message: str,
     ) -> str:
-        log_id = f"log_{session_id}_{uuid4().hex[:8]}"
         now = utc_now()
-        db.add(
-            AgentLogModel(
-                id=log_id,
-                session_id=session_id,
-                ts=now,
-                level=level,
-                message=message,
+        # session 续聊时 stdout/stderr 两个 pump 共用同一个 log_db，
+        # 这里用按 session 的锁串行分配 sequence 并写入，避免并发写。
+        async with _session_log_lock(session_id):
+            sequence = await _next_sequence(db, session_id)
+            log_id = _log_id(session_id, sequence)
+            db.add(
+                AgentLogModel(
+                    id=log_id,
+                    session_id=session_id,
+                    ts=now,
+                    level=level,
+                    message=message,
+                    sequence=sequence,
+                )
             )
-        )
-        await db.commit()
+            await db.commit()
         self._publish_log_payload(
-            project_id, task_id, session_id, log_id, level, message, now
+            project_id, task_id, session_id, log_id, level, message, now, sequence
         )
         return log_id
 
@@ -1838,21 +1908,27 @@ class IntegrationService:
     ) -> int:
         logs = runtime.sessions.list_logs(session_id)
         new_logs = logs[seen:]
-        for log in new_logs:
-            log_id = f"log_{session_id}_{log.sequence}"
-            if await db.get(AgentLogModel, log_id) is None:
-                db.add(
-                    AgentLogModel(
-                        id=log_id,
-                        session_id=session_id,
-                        ts=log.ts,
-                        level=log.level,
-                        message=log.message,
-                    )
-                )
-                self._publish_log(project_id, task_id, session_id, log_id, log)
         if new_logs:
-            await db.commit()
+            # ``seen`` 游标保证不会重复插入，无需再按 id 探测已有行。
+            async with _session_log_lock(session_id):
+                base = await _next_sequence(db, session_id)
+                for offset, log in enumerate(new_logs):
+                    sequence = base + offset
+                    log_id = _log_id(session_id, sequence)
+                    db.add(
+                        AgentLogModel(
+                            id=log_id,
+                            session_id=session_id,
+                            ts=log.ts,
+                            level=log.level,
+                            message=log.message,
+                            sequence=sequence,
+                        )
+                    )
+                    self._publish_log(
+                        project_id, task_id, session_id, log_id, log, sequence
+                    )
+                await db.commit()
         return len(logs)
 
     async def _finalize(
@@ -1978,6 +2054,7 @@ class IntegrationService:
         session_id: str,
         log_id: str,
         log: Any,
+        sequence: int,
     ) -> None:
         self._publish_log_payload(
             project_id,
@@ -1987,6 +2064,7 @@ class IntegrationService:
             log.level,
             log.message,
             log.ts,
+            sequence,
         )
 
     def _publish_log_payload(
@@ -1998,6 +2076,7 @@ class IntegrationService:
         level: str,
         message: str,
         ts,
+        sequence: int,
     ) -> None:
         try:
             bus.publish(
@@ -2011,7 +2090,7 @@ class IntegrationService:
                         "ts": ts.isoformat(),
                         "level": level,
                         "message": message,
-                        "sequence": 0,
+                        "sequence": sequence,
                     },
                     task_id=task_id,
                 )
@@ -2127,6 +2206,9 @@ class IntegrationService:
                     f"role_{slug or 'member'}",
                     name=f"角色 {role_name}",
                 )
+                # 占位角色也登记为项目成员，否则它们不会出现在成员列表和
+                # 任务分配下拉框里，任务一旦改走就无法再分配给该角色。
+                await self._ensure_project_member(project_id, user.id)
                 specs.append(
                     TeamMemberSpec(
                         member_id=user.id, name=user.name, areas=[]
