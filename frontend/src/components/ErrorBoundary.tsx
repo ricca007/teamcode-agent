@@ -1,5 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
+import { translate } from "../i18n";
+
 interface Props {
   children: ReactNode;
 }
@@ -33,12 +35,15 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="panel">
           <div className="empty" role="alert">
-            <p className="empty__title">页面渲染出错</p>
+            <p className="empty__title">{translate("errors.pageTitle")}</p>
             <p className="empty__desc">
-              {this.state.error.message || "未知错误"}。错误详情已写入浏览器控制台。
+              {translate("errors.pageDesc", {
+                message:
+                  this.state.error.message || translate("errors.unknown"),
+              })}
             </p>
             <button type="button" className="btn btn--tiny" onClick={this.handleReload}>
-              重新加载
+              {translate("common.reload")}
             </button>
           </div>
         </div>

@@ -8,10 +8,12 @@ import {
   type ApiKeyRow,
   type CreatedApiKey,
 } from "../api/client";
+import { useT } from "../i18n";
 import { useAppStore } from "../store/useAppStore";
 import { ErrorBanner } from "./States";
 
 export function ApiKeysPanel() {
+  const t = useT();
   const projectId = useAppStore((state) => state.projectId);
   const [keys, setKeys] = useState<ApiKeyRow[]>([]);
   const [name, setName] = useState("coding-agent");
@@ -46,7 +48,7 @@ export function ApiKeysPanel() {
         scopeToProject ? projectId : undefined,
       );
       setCreated(key);
-      setNotice("API Key 只显示一次，请立即复制保存");
+      setNotice(t("apikeys.onlyOnce"));
       await refresh();
     } catch (createError) {
       setError(errorMessage(createError));
@@ -60,7 +62,7 @@ export function ApiKeysPanel() {
     setError(null);
     try {
       await revokeApiKey(key.id);
-      setNotice(`已撤销 ${key.name}`);
+      setNotice(t("apikeys.revokedNotice", { name: key.name }));
       await refresh();
     } catch (revokeError) {
       setError(errorMessage(revokeError));
@@ -72,9 +74,9 @@ export function ApiKeysPanel() {
   const copy = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      setNotice("已复制到剪贴板");
+      setNotice(t("common.copiedClipboard"));
     } catch {
-      setNotice("复制失败，请手动选择");
+      setNotice(t("apikeys.copyFailed"));
     }
   };
 
@@ -82,12 +84,9 @@ export function ApiKeysPanel() {
     <section className="page">
       <header className="page-head">
         <div>
-          <p className="eyebrow">程序化访问</p>
-          <h1>API Key</h1>
-          <p className="page-head__desc">
-            给 Coding Agent、CLI 或外部脚本使用的长期凭据。Key 继承你的账号和项目角色，
-            可随时撤销。
-          </p>
+          <p className="eyebrow">{t("apikeys.eyebrow")}</p>
+          <h1>{t("nav.apikeys")}</h1>
+          <p className="page-head__desc">{t("apikeys.desc")}</p>
         </div>
       </header>
 
@@ -100,15 +99,15 @@ export function ApiKeysPanel() {
 
       <div className="panel">
         <div className="panel__head">
-          <p className="eyebrow">新建 Key</p>
+          <p className="eyebrow">{t("apikeys.newKey")}</p>
         </div>
         <form className="auth-form" onSubmit={handleCreate}>
           <label>
-            用途名称
+            {t("apikeys.purpose")}
             <input
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="例如 claude-code-lin"
+              placeholder={t("apikeys.purposePlaceholder")}
             />
           </label>
           <label className="checkbox">
@@ -117,22 +116,22 @@ export function ApiKeysPanel() {
               checked={scopeToProject}
               onChange={(event) => setScopeToProject(event.target.checked)}
             />
-            仅限当前项目 {projectId}
+            {t("apikeys.scopeOnly", { project: projectId })}
           </label>
           <button type="submit" className="btn btn--primary" disabled={busy}>
-            {busy ? "创建中" : "生成 API Key"}
+            {busy ? t("apikeys.creating") : t("apikeys.create")}
           </button>
         </form>
         {created ? (
           <div className="key-reveal">
-            <p className="auth-hint">请立即复制，关闭后无法再次查看：</p>
+            <p className="auth-hint">{t("apikeys.copyNow")}</p>
             <code className="key-reveal__value">{created.raw_key}</code>
             <button
               type="button"
               className="btn btn--tiny"
               onClick={() => void copy(created.raw_key)}
             >
-              复制
+              {t("common.copy")}
             </button>
           </div>
         ) : null}
@@ -140,11 +139,11 @@ export function ApiKeysPanel() {
 
       <div className="panel">
         <div className="panel__head">
-          <p className="eyebrow">已有 Key</p>
+          <p className="eyebrow">{t("apikeys.existing")}</p>
           <span className="mono panel__count">{keys.length}</span>
         </div>
         {keys.length === 0 ? (
-          <p className="auth-hint">还没有 API Key。</p>
+          <p className="auth-hint">{t("apikeys.empty")}</p>
         ) : (
           <div className="team-list">
             {keys.map((key) => (
@@ -152,10 +151,11 @@ export function ApiKeysPanel() {
                 <div>
                   <p className="team-row__name">
                     {key.name}
-                    {key.revoked ? "（已撤销）" : ""}
+                    {key.revoked ? t("apikeys.revokedSuffix") : ""}
                   </p>
                   <p className="auth-hint mono">
-                    {key.prefix}… · {key.project_id ?? "全部项目"} ·{" "}
+                    {key.prefix}… ·{" "}
+                    {key.project_id ?? t("apikeys.allProjects")} ·{" "}
                     {key.created_at.slice(0, 19)}
                   </p>
                 </div>
@@ -166,7 +166,7 @@ export function ApiKeysPanel() {
                     disabled={busy}
                     onClick={() => void handleRevoke(key)}
                   >
-                    撤销
+                    {t("apikeys.revoke")}
                   </button>
                 ) : null}
               </div>

@@ -1,8 +1,10 @@
 import { useEffect, type ReactNode } from "react";
 
 import { getAgents, setAuthToken } from "../api/client";
+import { useT, type TKey } from "../i18n";
 import { useAppStore } from "../store/useAppStore";
 import type { ConnectionState } from "../types";
+import { LanguageToggle } from "./LanguageToggle";
 
 export type ViewKey =
   | "dashboard"
@@ -12,20 +14,24 @@ export type ViewKey =
   | "apikeys"
   | "team";
 
-const NAV: Array<{ key: ViewKey; label: string; hint: string }> = [
-  { key: "dashboard", label: "任务看板", hint: "进度与分配" },
-  { key: "agents", label: "Agent 会话", hint: "状态与日志" },
-  { key: "interfaces", label: "接口浏览", hint: "签名与版本" },
-  { key: "changes", label: "代码变更", hint: "Diff 与提交" },
-  { key: "apikeys", label: "API Key", hint: "程序化访问" },
+const NAV: Array<{ key: ViewKey; label: TKey; hint: TKey }> = [
+  { key: "dashboard", label: "nav.dashboard", hint: "nav.dashboardHint" },
+  { key: "agents", label: "nav.agents", hint: "nav.agentsHint" },
+  { key: "interfaces", label: "nav.interfaces", hint: "nav.interfacesHint" },
+  { key: "changes", label: "nav.changes", hint: "nav.changesHint" },
+  { key: "apikeys", label: "nav.apikeys", hint: "nav.apikeysHint" },
 ];
 
-const LEADER_NAV = { key: "team" as ViewKey, label: "团队管理", hint: "大纲与分配" };
+const LEADER_NAV = {
+  key: "team" as ViewKey,
+  label: "nav.team" as TKey,
+  hint: "nav.teamHint" as TKey,
+};
 
-const CONNECTION_COPY: Record<ConnectionState, string> = {
-  open: "实时连接已建立",
-  connecting: "正在建立连接",
-  closed: "连接中断 · 等待重连",
+const CONNECTION_COPY: Record<ConnectionState, TKey> = {
+  open: "conn.open",
+  connecting: "conn.connecting",
+  closed: "conn.closed",
 };
 
 function BrandMark() {
@@ -165,6 +171,7 @@ export function AppShell({
   const setAgents = useAppStore((state) => state.setAgents);
   const setSelectedAgent = useAppStore((state) => state.setSelectedAgent);
   const load = useAppStore((state) => state.load);
+  const t = useT();
 
   useEffect(() => {
     void getAgents()
@@ -185,8 +192,10 @@ export function AppShell({
 
   const nav = role === "leader" ? [...NAV, LEADER_NAV] : NAV;
   const currentProject = projects.find((item) => item.id === projectId);
-  const projectName = currentProject?.name ?? projectId ?? "未选择团队";
-  const currentLabel = nav.find((item) => item.key === view)?.label ?? "工作区";
+  const projectName = currentProject?.name ?? projectId ?? t("shell.noTeam");
+  const currentLabel = t(
+    nav.find((item) => item.key === view)?.label ?? "shell.workspace",
+  );
   const counts: Record<ViewKey, number> = {
     dashboard: tasks.length,
     agents: sessions.length,
@@ -206,7 +215,7 @@ export function AppShell({
   return (
     <>
       <a className="skip-link" href="#main-content">
-        跳到主要内容
+        {t("shell.skip")}
       </a>
       <div className="app-shell">
         <aside className="sidebar">
@@ -214,16 +223,20 @@ export function AppShell({
             <BrandMark />
             <div>
               <p className="brand__name">TeamCode</p>
-              <p className="brand__sub">Agent 协作台</p>
+              <p className="brand__sub">{t("shell.subtitle")}</p>
             </div>
           </div>
 
           <div className="project-block">
-            <p className="eyebrow">当前项目</p>
+            <p className="eyebrow">{t("shell.currentProject")}</p>
             <p className="project-block__name">{projectName}</p>
             <p className="project-block__id mono">
-              {userName ?? "未登录"} ·{" "}
-              {role === "leader" ? "队长" : role === "member" ? "组员" : "未知角色"}
+              {userName ?? t("shell.notLoggedIn")} ·{" "}
+              {role === "leader"
+                ? t("role.leader")
+                : role === "member"
+                  ? t("role.member")
+                  : t("role.unknown")}
             </p>
             {projects.length > 1 ? (
               <select
@@ -237,11 +250,17 @@ export function AppShell({
                     selectProject(next);
                   }
                 }}
-                aria-label="切换团队"
+                aria-label={t("shell.switchTeam")}
               >
                 {projects.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.name}（{item.role === "leader" ? "队长" : "组员"}）
+                    {t("shell.teamOption", {
+                      name: item.name,
+                      role:
+                        item.role === "leader"
+                          ? t("role.leader")
+                          : t("role.member"),
+                    })}
                   </option>
                 ))}
               </select>
@@ -252,13 +271,13 @@ export function AppShell({
                 className="btn btn--tiny"
                 onClick={handleLogout}
               >
-                退出账号
+                {t("shell.logout")}
               </button>
             </div>
           </div>
 
-          <nav className="nav" aria-label="主导航">
-            <p className="eyebrow nav__label">工作区</p>
+          <nav className="nav" aria-label={t("shell.mainNav")}>
+            <p className="eyebrow nav__label">{t("shell.workspace")}</p>
             {nav.map((item) => (
               <button
                 key={item.key}
@@ -269,8 +288,8 @@ export function AppShell({
               >
                 <NavIcon name={item.key} />
                 <span className="nav__text">
-                  <span className="nav__title">{item.label}</span>
-                  <span className="nav__hint">{item.hint}</span>
+                  <span className="nav__title">{t(item.label)}</span>
+                  <span className="nav__hint">{t(item.hint)}</span>
                 </span>
                 <span className="nav__count mono">{counts[item.key]}</span>
               </button>
@@ -280,10 +299,10 @@ export function AppShell({
           <div className="sidebar__footer">
             <p className={`conn conn--${connection}`} role="status">
               <span className="conn__dot" aria-hidden="true" />
-              {CONNECTION_COPY[connection]}
+              {t(CONNECTION_COPY[connection])}
             </p>
             <p className="sidebar__meta mono">
-              事件通道 /ws/projects/{projectId}
+              {t("shell.eventChannel", { projectId })}
             </p>
           </div>
         </aside>
@@ -298,12 +317,13 @@ export function AppShell({
               <span className="crumb__current">{currentLabel}</span>
             </div>
             <div className="topbar__actions">
+              <LanguageToggle />
               <label className="agent-select">
-                <span className="sr-only">选择 Coding Agent</span>
+                <span className="sr-only">{t("shell.selectAgent")}</span>
                 <select
                   value={selectedAgent}
                   onChange={(event) => setSelectedAgent(event.target.value)}
-                  aria-label="选择 Coding Agent"
+                  aria-label={t("shell.selectAgent")}
                 >
                   {agents.length === 0 ? (
                     <option value={selectedAgent}>{selectedAgent}</option>
@@ -315,7 +335,7 @@ export function AppShell({
                         disabled={!agent.available}
                       >
                         {agent.name}
-                        {agent.available ? "" : "（未安装）"}
+                        {agent.available ? "" : t("shell.notInstalled")}
                       </option>
                     ))
                   )}
@@ -326,8 +346,8 @@ export function AppShell({
                 className={`btn btn--ghost btn--icon${loading ? " is-spinning" : ""}`}
                 onClick={() => void load()}
                 disabled={loading}
-                aria-label="刷新项目数据"
-                title="刷新项目数据"
+                aria-label={t("shell.refreshData")}
+                title={t("shell.refreshData")}
               >
                 <RefreshIcon />
               </button>

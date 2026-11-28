@@ -1,16 +1,25 @@
 import { useState } from "react";
 
 import { errorMessage, runTask } from "../api/client";
+import { translate, useLocale, useT, type TKey } from "../i18n";
 import { useAppStore } from "../store/useAppStore";
 import type { Task, TaskStatus } from "../types";
 import { EmptyState, ErrorBanner } from "./States";
 import { StatusPill } from "./StatusPill";
 
-const STATUS_COLUMNS: Array<{ key: string; label: string; statuses: TaskStatus[] }> = [
-  { key: "pending", label: "待处理", statuses: ["planned"] },
-  { key: "active", label: "进行中", statuses: ["in_progress"] },
-  { key: "attention", label: "需处理", statuses: ["blocked", "cancelled"] },
-  { key: "done", label: "已交付", statuses: ["completed"] },
+const STATUS_COLUMNS: Array<{
+  key: string;
+  label: TKey;
+  statuses: TaskStatus[];
+}> = [
+  { key: "pending", label: "dashboard.column.pending", statuses: ["planned"] },
+  { key: "active", label: "dashboard.column.active", statuses: ["in_progress"] },
+  {
+    key: "attention",
+    label: "dashboard.column.attention",
+    statuses: ["blocked", "cancelled"],
+  },
+  { key: "done", label: "dashboard.column.done", statuses: ["completed"] },
 ];
 
 /** 成员列内按紧急程度排序，而不是按任务 ID。 */
@@ -52,7 +61,7 @@ function summarizeMembers(tasks: Task[]): MemberSummary[] {
     if (!member) {
       member = {
         ownerId,
-        name: task.owner_name ?? task.owner_id ?? "未分配",
+        name: task.owner_name ?? task.owner_id ?? translate("common.unassigned"),
         tasks: [],
         total: 0,
         done: 0,
@@ -102,7 +111,8 @@ function TaskCard({
   onRun: (task: Task) => void;
   running: boolean;
 }) {
-  const pathLabel = task.allowed_paths[0] ?? "未限制路径";
+  const t = useT();
+  const pathLabel = task.allowed_paths[0] ?? t("dashboard.noPathLimit");
   const extraPaths = Math.max(task.allowed_paths.length - 1, 0);
   const canRun = task.status === "planned" || task.status === "blocked";
 
@@ -111,7 +121,9 @@ function TaskCard({
       <div className="task-card__top">
         <span className="task-card__priority mono">P{task.priority}</span>
         {task.replan_version > 1 ? (
-          <span className="chip chip--replan">重规划 v{task.replan_version}</span>
+          <span className="chip chip--replan">
+            {t("dashboard.replan", { version: task.replan_version })}
+          </span>
         ) : null}
         <span className="task-card__status">
           <StatusPill status={task.status} />
@@ -123,7 +135,7 @@ function TaskCard({
             disabled={running}
             onClick={() => onRun(task)}
           >
-            {running ? "启动中" : "运行"}
+            {running ? t("dashboard.starting") : t("dashboard.run")}
           </button>
         ) : null}
       </div>
@@ -147,7 +159,7 @@ function TaskCard({
 
       {task.depends_on.length > 0 ? (
         <div className="task-card__deps">
-          <span className="eyebrow">依赖</span>
+          <span className="eyebrow">{t("dashboard.depends")}</span>
           {task.depends_on.map((taskId) => (
             <span key={taskId} className="chip mono">
               {taskId}
@@ -160,6 +172,7 @@ function TaskCard({
 }
 
 function MemberCard({ member }: { member: MemberSummary }) {
+  const t = useT();
   const initial = member.name.trim().charAt(0) || "?";
   return (
     <article className="member-card">
@@ -170,7 +183,11 @@ function MemberCard({ member }: { member: MemberSummary }) {
         <div>
           <p className="member-card__name">{member.name}</p>
           <p className="member-card__meta mono">
-            {member.done} / {member.total} 完成 · {member.percent}%
+            {t("dashboard.memberMeta", {
+              done: member.done,
+              total: member.total,
+              percent: member.percent,
+            })}
           </p>
         </div>
       </div>
@@ -178,7 +195,7 @@ function MemberCard({ member }: { member: MemberSummary }) {
       <div
         className={`progress progress--thin${member.percent === 100 ? " is-complete" : ""}`}
         role="progressbar"
-        aria-label={`${member.name}的任务完成度`}
+        aria-label={t("dashboard.memberProgress", { name: member.name })}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={member.percent}
@@ -188,13 +205,13 @@ function MemberCard({ member }: { member: MemberSummary }) {
 
       <div className="member-card__stats">
         <span className="member-stat member-stat--running">
-          运行中 {member.running}
+          {t("dashboard.statRunning", { count: member.running })}
         </span>
         <span className="member-stat member-stat--pending">
-          待处理 {member.pending}
+          {t("dashboard.statPending", { count: member.pending })}
         </span>
         <span className="member-stat member-stat--attention">
-          异常 {member.attention}
+          {t("dashboard.statAttention", { count: member.attention })}
         </span>
       </div>
     </article>
@@ -226,6 +243,8 @@ function LoadingColumns() {
 }
 
 export function Dashboard({ onOpenAgents }: { onOpenAgents: () => void }) {
+  const t = useT();
+  const locale = useLocale();
   const tasks = useAppStore((state) => state.tasks);
   const loading = useAppStore((state) => state.loading);
   const error = useAppStore((state) => state.error);
@@ -240,17 +259,18 @@ export function Dashboard({ onOpenAgents }: { onOpenAgents: () => void }) {
   const handleRun = async (task: Task) => {
     const agent = agents.find((item) => item.name === selectedAgent);
     if (!agent?.available) {
-      setNotice(
-        `${selectedAgent} 当前不可用：请先安装对应 CLI，或在顶部切换一个可用的 Agent`,
-      );
+      setNotice(t("dashboard.agentUnavailable", { agent: selectedAgent }));
       return;
     }
     setRunningTaskId(task.task_id);
     setNotice(null);
     try {
-      await runTask(task.task_id, selectedAgent);
+      await runTask(task.task_id, selectedAgent, locale);
       setNotice(
-        `任务「${task.title}」已用 ${selectedAgent} 启动，日志和状态会自动刷新；可在「Agent 会话」继续追问。`,
+        t("dashboard.taskStarted", {
+          title: task.title,
+          agent: selectedAgent,
+        }),
       );
       await load(true);
     } catch (runError) {
@@ -278,7 +298,10 @@ export function Dashboard({ onOpenAgents }: { onOpenAgents: () => void }) {
       ? members.map((member) => ({
           key: `member-${member.ownerId}`,
           label: member.name,
-          meta: `${member.done}/${member.total} 完成`,
+          meta: t("dashboard.columnMeta", {
+            done: member.done,
+            total: member.total,
+          }),
           items: member.tasks,
         }))
       : STATUS_COLUMNS.map((column) => {
@@ -287,8 +310,8 @@ export function Dashboard({ onOpenAgents }: { onOpenAgents: () => void }) {
           );
           return {
             key: column.key,
-            label: column.label,
-            meta: `${items.length} 个`,
+            label: t(column.label),
+            meta: t("dashboard.countItems", { count: items.length }),
             items,
           };
         });
@@ -297,16 +320,13 @@ export function Dashboard({ onOpenAgents }: { onOpenAgents: () => void }) {
     <section className="page">
       <header className="page-head">
         <div>
-          <p className="eyebrow">项目进度</p>
-          <h1>任务看板</h1>
-          <p className="page-head__desc">
-            任务按负责人拆解，进度以成员为单位汇总，状态随成员会话和代码变更实时更新。
-            本地未配置真实 Coding Agent 时，点击「运行」使用 Mock 适配器模拟执行。
-          </p>
+          <p className="eyebrow">{t("dashboard.eyebrow")}</p>
+          <h1>{t("nav.dashboard")}</h1>
+          <p className="page-head__desc">{t("dashboard.desc")}</p>
         </div>
         <div className="page-head__actions">
           <button type="button" className="btn btn--ghost" onClick={onOpenAgents}>
-            查看 Agent 会话
+            {t("dashboard.viewSessions")}
           </button>
         </div>
       </header>
@@ -321,12 +341,14 @@ export function Dashboard({ onOpenAgents }: { onOpenAgents: () => void }) {
         <div className="summary-strip__main">
           <div className="summary-strip__numbers">
             <strong className="summary-strip__value">{done}</strong>
-            <span className="summary-strip__total">/ {total} 个任务完成</span>
+            <span className="summary-strip__total">
+              {t("dashboard.tasksDoneTotal", { total })}
+            </span>
           </div>
           <div
             className="progress"
             role="progressbar"
-            aria-label="项目整体任务完成度"
+            aria-label={t("dashboard.overallProgress")}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={percent}
@@ -336,15 +358,15 @@ export function Dashboard({ onOpenAgents }: { onOpenAgents: () => void }) {
         </div>
         <dl className="summary-strip__meta">
           <div>
-            <dt>进行中</dt>
+            <dt>{t("dashboard.running")}</dt>
             <dd className="mono">{running}</dd>
           </div>
           <div>
-            <dt>待处理</dt>
+            <dt>{t("dashboard.pending")}</dt>
             <dd className="mono">{pending}</dd>
           </div>
           <div>
-            <dt>需处理</dt>
+            <dt>{t("dashboard.attention")}</dt>
             <dd className="mono">{attention}</dd>
           </div>
         </dl>
@@ -359,11 +381,11 @@ export function Dashboard({ onOpenAgents }: { onOpenAgents: () => void }) {
       ) : total === 0 ? (
         <div className="panel">
           <EmptyState
-            title="还没有开发任务"
-            description="输入项目需求后，Manager Agent 会生成任务、依赖和接口契约。"
+            title={t("dashboard.emptyTitle")}
+            description={t("dashboard.emptyDesc")}
             action={
               <button type="button" className="btn" onClick={() => void load()}>
-                重新加载
+                {t("common.reload")}
               </button>
             }
           />
@@ -373,9 +395,11 @@ export function Dashboard({ onOpenAgents }: { onOpenAgents: () => void }) {
           <section aria-labelledby="member-progress-title">
             <div className="section-head">
               <h2 id="member-progress-title" className="section-head__title">
-                成员进度
+                {t("dashboard.memberProgressTitle")}
               </h2>
-              <span className="section-head__meta">按负责人汇总</span>
+              <span className="section-head__meta">
+                {t("dashboard.groupedByOwner")}
+              </span>
             </div>
             <div className="member-progress">
               {members.map((member) => (
@@ -386,25 +410,25 @@ export function Dashboard({ onOpenAgents }: { onOpenAgents: () => void }) {
 
           <div className="board">
             <div className="board-head">
-              <p className="eyebrow">开发任务</p>
+              <p className="eyebrow">{t("dashboard.developmentTasks")}</p>
               <div
                 className="segmented segmented--sm"
                 role="group"
-                aria-label="任务分组方式"
+                aria-label={t("dashboard.groupBy")}
               >
                 <button
                   type="button"
                   aria-pressed={groupMode === "member"}
                   onClick={() => setGroupMode("member")}
                 >
-                  按成员
+                  {t("dashboard.byMember")}
                 </button>
                 <button
                   type="button"
                   aria-pressed={groupMode === "status"}
                   onClick={() => setGroupMode("status")}
                 >
-                  按状态
+                  {t("dashboard.byStatus")}
                 </button>
               </div>
             </div>
@@ -427,7 +451,7 @@ export function Dashboard({ onOpenAgents }: { onOpenAgents: () => void }) {
                   </header>
                   <div className="kanban__body">
                     {column.items.length === 0 ? (
-                      <p className="kanban__empty">暂无任务</p>
+                      <p className="kanban__empty">{t("dashboard.noTasks")}</p>
                     ) : (
                       column.items.map((task) => (
                         <TaskCard

@@ -64,6 +64,8 @@ class RequirementsRequest(BaseModel):
     roles: list[str] = Field(default_factory=list)
     max_tasks: int = Field(default=12, ge=1, le=50)
     mode: Literal["plan", "replan"] = "plan"
+    # 前端当前语言：决定占位成员显示名（角色 A / Role A）
+    locale: Literal["zh", "en"] = "zh"
 
     @field_validator("requirements")
     @classmethod
@@ -81,6 +83,8 @@ class RunRequest(BaseModel):
     prompt: str | None = None
     context: dict[str, Any] | None = None
     base_branch: str = "main"
+    # 前端当前语言：决定 Agent 提示词与注入的接口 Markdown 用中文还是英文
+    locale: Literal["zh", "en"] = "zh"
 
 
 class CommitRequest(BaseModel):

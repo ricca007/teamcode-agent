@@ -127,6 +127,7 @@ def _start_watcher(
 async def list_interfaces(
     project_id: str,
     format: Literal["json", "markdown"] = "json",
+    lang: Literal["zh", "en"] = "zh",
     actor: Actor | None = Depends(get_actor),  # noqa: B008
     service: InterfaceRegistryService = Depends(_registry),  # noqa: B008
 ):
@@ -151,7 +152,7 @@ async def list_interfaces(
 
         if format == "markdown":
             return PlainTextResponse(
-                await service.render_markdown(project_id),
+                await service.render_markdown(project_id, lang),
                 media_type="text/markdown; charset=utf-8",
             )
 

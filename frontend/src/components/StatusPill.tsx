@@ -1,4 +1,4 @@
-import { STATUS_LABEL } from "../lib/format";
+import { STATUS_KEY, useT } from "../i18n";
 import type { AgentStatus, TaskStatus } from "../types";
 
 export function StatusPill({
@@ -6,10 +6,11 @@ export function StatusPill({
 }: {
   status: TaskStatus | AgentStatus;
 }) {
+  const t = useT();
   return (
     <span className={`pill pill--${status}`}>
       <span className="pill__dot" aria-hidden="true" />
-      {STATUS_LABEL[status]}
+      {t(STATUS_KEY[status])}
     </span>
   );
 }

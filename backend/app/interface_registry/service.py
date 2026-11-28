@@ -422,8 +422,14 @@ class InterfaceRegistryService:
             for row in rows
         ]
 
-    async def render_markdown(self, project_id: str) -> str:
-        return render_markdown(project_id, await self.list_interfaces(project_id))
+    async def render_markdown(
+        self, project_id: str, locale: str = "zh"
+    ) -> str:
+        return render_markdown(
+            project_id,
+            await self.list_interfaces(project_id),
+            locale=locale,
+        )
 
     # ------------------------------------------------------------------
     # 内部工具

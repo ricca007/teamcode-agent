@@ -19,7 +19,9 @@ import {
   type AuthResult,
   type ProjectSummary,
 } from "../api/client";
+import { useT } from "../i18n";
 import { useAppStore } from "../store/useAppStore";
+import { LanguageToggle } from "./LanguageToggle";
 import { ErrorBanner, LoadingPanel } from "./States";
 
 type Mode = "loading" | "auth" | "setup" | "pending" | "ready";
@@ -27,6 +29,7 @@ type AuthTab = "login" | "register";
 type SetupTab = "create" | "join";
 
 export function AuthGate({ children }: { children: ReactNode }) {
+  const t = useT();
   const [mode, setMode] = useState<Mode>("loading");
   const [authTab, setAuthTab] = useState<AuthTab>("login");
   const [setupTab, setSetupTab] = useState<SetupTab>("create");
@@ -195,7 +198,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return (
       <div className="auth-screen">
         <div className="panel auth-card">
-          <LoadingPanel label="正在恢复登录状态" />
+          <div className="auth-lang">
+            <LanguageToggle />
+          </div>
+          <LoadingPanel label={t("auth.restoring")} />
         </div>
       </div>
     );
@@ -205,12 +211,15 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return (
       <div className="auth-screen">
         <div className="panel auth-card">
-          <p className="eyebrow">等待队长批准</p>
-          <h1 className="auth-title">已申请加入团队</h1>
+          <div className="auth-lang">
+            <LanguageToggle />
+          </div>
+          <p className="eyebrow">{t("auth.pendingEyebrow")}</p>
+          <h1 className="auth-title">{t("auth.pendingTitle")}</h1>
           <p className="auth-hint">
-            团队 ID：<code>{pendingProjectId}</code>
+            {t("auth.teamId")}：<code>{pendingProjectId}</code>
             <br />
-            队长批准后会自动进入，不需要重新登录。
+            {t("auth.autoEnter")}
           </p>
           {error ? <ErrorBanner message={error} /> : null}
           <div className="auth-actions">
@@ -222,7 +231,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 setMode("setup");
               }}
             >
-              返回
+              {t("auth.back")}
             </button>
           </div>
         </div>
@@ -234,29 +243,32 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return (
       <div className="auth-screen">
         <div className="panel auth-card">
-          <p className="eyebrow">{userName || "已登录"}</p>
-          <h1 className="auth-title">创建或加入团队</h1>
-          <div className="segmented" role="group" aria-label="团队方式">
+          <div className="auth-lang">
+            <LanguageToggle />
+          </div>
+          <p className="eyebrow">{userName || t("auth.loggedIn")}</p>
+          <h1 className="auth-title">{t("auth.setupTitle")}</h1>
+          <div className="segmented" role="group" aria-label={t("auth.teamMode")}>
             <button
               type="button"
               aria-pressed={setupTab === "create"}
               onClick={() => setSetupTab("create")}
             >
-              创建团队
+              {t("auth.createTeam")}
             </button>
             <button
               type="button"
               aria-pressed={setupTab === "join"}
               onClick={() => setSetupTab("join")}
             >
-              加入团队
+              {t("auth.joinTeam")}
             </button>
           </div>
           {error ? <ErrorBanner message={error} /> : null}
           {setupTab === "create" ? (
             <form className="auth-form" onSubmit={handleCreate}>
               <label>
-                团队名称
+                {t("auth.teamName")}
                 <input
                   value={teamName}
                   onChange={(event) => setTeamName(event.target.value)}
@@ -264,7 +276,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 />
               </label>
               <label>
-                代码仓库路径（必须是 Git 仓库）
+                {t("auth.repoPath")}
                 <input
                   value={repoPath}
                   onChange={(event) => setRepoPath(event.target.value)}
@@ -277,17 +289,17 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 className="btn btn--primary"
                 disabled={busy}
               >
-                {busy ? "创建中" : "创建并成为队长"}
+                {busy ? t("auth.creating") : t("auth.createBecomeLeader")}
               </button>
             </form>
           ) : (
             <form className="auth-form" onSubmit={handleJoin}>
               <label>
-                团队 ID
+                {t("auth.teamId")}
                 <input
                   value={joinProjectId}
                   onChange={(event) => setJoinProjectId(event.target.value)}
-                  placeholder="例如 p_demo"
+                  placeholder={t("auth.teamIdPlaceholder")}
                   required
                 />
               </label>
@@ -296,7 +308,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 className="btn btn--primary"
                 disabled={busy}
               >
-                {busy ? "申请中" : "申请加入"}
+                {busy ? t("auth.applying") : t("auth.applyJoin")}
               </button>
             </form>
           )}
@@ -308,33 +320,33 @@ export function AuthGate({ children }: { children: ReactNode }) {
   return (
     <div className="auth-screen">
       <div className="panel auth-card">
+        <div className="auth-lang">
+          <LanguageToggle />
+        </div>
         <p className="eyebrow">TeamCode</p>
-        <h1 className="auth-title">登录或注册</h1>
-        <p className="auth-hint">
-          一个账号可以加入多个团队；在不同团队里可以是队长或组员，
-          也可同时在多个项目中拥有任务。
-        </p>
-        <div className="segmented" role="group" aria-label="登录方式">
+        <h1 className="auth-title">{t("auth.loginOrRegister")}</h1>
+        <p className="auth-hint">{t("auth.hint")}</p>
+        <div className="segmented" role="group" aria-label={t("auth.loginMode")}>
           <button
             type="button"
             aria-pressed={authTab === "login"}
             onClick={() => setAuthTab("login")}
           >
-            登录
+            {t("auth.login")}
           </button>
           <button
             type="button"
             aria-pressed={authTab === "register"}
             onClick={() => setAuthTab("register")}
           >
-            注册
+            {t("auth.register")}
           </button>
         </div>
         {error ? <ErrorBanner message={error} /> : null}
         {authTab === "login" ? (
           <form className="auth-form" onSubmit={handleLogin}>
             <label>
-              邮箱
+              {t("auth.email")}
               <input
                 type="email"
                 value={loginEmail}
@@ -343,7 +355,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
               />
             </label>
             <label>
-              密码
+              {t("auth.password")}
               <input
                 type="password"
                 value={loginPassword}
@@ -356,13 +368,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
               className="btn btn--primary"
               disabled={busy}
             >
-              {busy ? "登录中" : "登录"}
+              {busy ? t("auth.loggingIn") : t("auth.login")}
             </button>
           </form>
         ) : (
           <form className="auth-form" onSubmit={handleRegister}>
             <label>
-              昵称
+              {t("auth.nickname")}
               <input
                 value={regName}
                 onChange={(event) => setRegName(event.target.value)}
@@ -370,7 +382,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
               />
             </label>
             <label>
-              邮箱
+              {t("auth.email")}
               <input
                 type="email"
                 value={regEmail}
@@ -379,7 +391,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
               />
             </label>
             <label>
-              密码（至少 6 位）
+              {t("auth.passwordMin")}
               <input
                 type="password"
                 value={regPassword}
@@ -393,7 +405,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
               className="btn btn--primary"
               disabled={busy}
             >
-              {busy ? "注册中" : "注册"}
+              {busy ? t("auth.registering") : t("auth.register")}
             </button>
           </form>
         )}

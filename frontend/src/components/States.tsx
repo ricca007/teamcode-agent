@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { useT } from "../i18n";
+
 export function SkeletonLines({ rows = 4 }: { rows?: number }) {
   return (
     <div className="skeleton" aria-hidden="true">
@@ -15,11 +17,12 @@ export function SkeletonLines({ rows = 4 }: { rows?: number }) {
   );
 }
 
-export function LoadingPanel({ label = "正在加载数据" }: { label?: string }) {
+export function LoadingPanel({ label }: { label?: string }) {
+  const t = useT();
   return (
     <div className="state-block" role="status" aria-live="polite">
       <SkeletonLines rows={5} />
-      <span className="sr-only">{label}</span>
+      <span className="sr-only">{label ?? t("states.loading")}</span>
     </div>
   );
 }
@@ -63,15 +66,16 @@ export function ErrorBanner({
   message: string;
   onRetry?: () => void;
 }) {
+  const t = useT();
   return (
     <div className="error-banner" role="alert">
       <div>
-        <p className="error-banner__title">部分请求没有成功</p>
+        <p className="error-banner__title">{t("states.partialError")}</p>
         <p>{message}</p>
       </div>
       {onRetry ? (
         <button type="button" className="btn btn--tiny" onClick={onRetry}>
-          重试
+          {t("states.retry")}
         </button>
       ) : null}
     </div>

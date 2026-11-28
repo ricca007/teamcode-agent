@@ -96,7 +96,7 @@ from app.schemas.core import (
     TaskSpec,
     TaskStatus,
     UserRole,
-    task_prompt,
+    agent_prompt,
     utc_now,
 )
 from app.schemas.planning import PlanningRequest, PlanResult, TeamMemberSpec
@@ -735,7 +735,7 @@ class IntegrationService:
         await self._require_leader(project_id, actor)
         project = await self._get_project(project_id)
         members = await self._member_specs(
-            project_id, request.members, request.roles
+            project_id, request.members, request.roles, request.locale
         )
         planning_request = PlanningRequest(
             project_id=project.id,
@@ -862,8 +862,12 @@ class IntegrationService:
             )
             context = request.context
             if context is None and adapter.name == "mock":
-                context = {"write_files": self._mock_writes(task_spec)}
-            interface_doc = await self._render_interfaces(project.id)
+                context = {
+                    "write_files": self._mock_writes(task_spec, request.locale)
+                }
+            interface_doc = await self._render_interfaces(
+                project.id, request.locale
+            )
 
             workspace = await asyncio.to_thread(
                 create_workspace,
@@ -920,6 +924,7 @@ class IntegrationService:
                 prompt=request.prompt,
                 context=context,
                 interface_doc=interface_doc,
+                locale=request.locale,
                 runtime=runtime,
             )
         )
@@ -1767,13 +1772,15 @@ class IntegrationService:
     # ------------------------------------------------------------------
     # 后台执行
     # ------------------------------------------------------------------
-    async def _render_interfaces(self, project_id: str) -> str:
+    async def _render_interfaces(
+        self, project_id: str, locale: str = "zh"
+    ) -> str:
         """把当前接口注册表渲染成 Markdown，直接注入 Agent Prompt。"""
         from app.interface_registry.service import InterfaceRegistryService
 
         try:
             return await InterfaceRegistryService(self.db).render_markdown(
-                project_id
+                project_id, locale
             )
         except Exception:
             logger.exception(
@@ -1792,6 +1799,7 @@ class IntegrationService:
         prompt: str | None,
         context: dict[str, Any] | None,
         interface_doc: str = "",
+        locale: str = "zh",
         runtime: ProjectRuntime,
     ) -> None:
         stop = asyncio.Event()
@@ -1801,19 +1809,11 @@ class IntegrationService:
         )
         changes = ChangeSet()
         status = AgentStatus.FAILED
-        allowed = ", ".join(task_spec.allowed_paths) or "(未限制)"
-        prompt_text = (
-            f"{prompt or task_prompt(task_spec)}\n\n"
-            "以下是当前接口注册表（Markdown，唯一事实来源），请直接以此为准，"
-            "不要猜测接口，也不需要再执行 pull-interfaces：\n\n"
-            f"{interface_doc or '（当前项目还没有已注册接口）'}\n\n"
-            "执行约束（必须遵守）：\n"
-            f"- 当前工作目录是独立的 Git Worktree；只允许创建或修改：{allowed}\n"
-            "- 不要修改 .git、.teamcode 目录；不要提交、不要执行 git push。\n"
-            "- 你可以使用 Bash 运行 pytest / python / git status 等命令。"
-            "实现完成后请运行相关测试；如果测试失败，请自行定位并修复，"
-            "直到通过或确认无法修复。\n"
-            "- 完成后用一两句话说明修改了哪些文件、测试结果。"
+        prompt_text = agent_prompt(
+            task_spec,
+            interface_doc,
+            prompt=prompt,
+            lang=locale,
         )
         try:
             await runtime.sessions.send_task(
@@ -2178,6 +2178,7 @@ class IntegrationService:
         project_id: str,
         provided: list[TeamMemberSpec],
         roles: list[str] | None = None,
+        locale: str = "zh",
     ) -> list[TeamMemberSpec]:
         if provided:
             specs: list[TeamMemberSpec] = []
@@ -2202,9 +2203,14 @@ class IntegrationService:
                 if not role_name:
                     continue
                 slug = re.sub(r"[^a-zA-Z0-9]+", "-", role_name.lower()).strip("-")
+                display_name = (
+                    f"Role {role_name}"
+                    if locale == "en"
+                    else f"角色 {role_name}"
+                )
                 user = await self._ensure_user(
                     f"role_{slug or 'member'}",
-                    name=f"角色 {role_name}",
+                    name=display_name,
                 )
                 # 占位角色也登记为项目成员，否则它们不会出现在成员列表和
                 # 任务分配下拉框里，任务一旦改走就无法再分配给该角色。
@@ -2674,7 +2680,7 @@ class IntegrationService:
         return adapter
 
     @staticmethod
-    def _mock_writes(task: TaskSpec) -> dict[str, str]:
+    def _mock_writes(task: TaskSpec, locale: str = "zh") -> dict[str, str]:
         base = (task.allowed_paths[0] if task.allowed_paths else "generated").rstrip(
             "/"
         )
@@ -2687,11 +2693,20 @@ class IntegrationService:
                 or class_name
             )
         class_name = re.sub(r"[^A-Za-z0-9_]", "", class_name) or "GeneratedService"
-        content = (
-            '"""由 MockAdapter 生成的演示文件。"""\n\n\n'
-            f"class {class_name}:\n"
-            '    """演示接口实现。"""\n\n'
-            "    def run(self) -> str:\n"
-            '        return "ok"\n'
-        )
+        if locale == "en":
+            content = (
+                '"""Demo file generated by MockAdapter."""\n\n\n'
+                f"class {class_name}:\n"
+                '    """Demo interface implementation."""\n\n'
+                "    def run(self) -> str:\n"
+                '        return "ok"\n'
+            )
+        else:
+            content = (
+                '"""由 MockAdapter 生成的演示文件。"""\n\n\n'
+                f"class {class_name}:\n"
+                '    """演示接口实现。"""\n\n'
+                "    def run(self) -> str:\n"
+                '        return "ok"\n'
+            )
         return {f"{base}/generated_service.py": content}

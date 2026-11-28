@@ -287,20 +287,117 @@ class ExecutionResult(BaseModel):
         }
 
 
-def task_prompt(task: TaskSpec, extra_context: str = "") -> str:
+# 提示词随前端语言切换（RunRequest.locale）；未知语言回退中文。
+_PROMPT_COPY: dict[str, dict[str, str]] = {
+    "zh": {
+        "intro": "你正在执行 TeamCode Agent 的开发任务。",
+        "pull": "开始前先拉取并阅读项目接口文档；如果命令不可用，"
+        "则阅读 docs/interface_contract.md。",
+        "source": "接口定义以拉取到的文档为唯一事实来源，不要凭空猜测接口。",
+        "task_id": "任务 ID",
+        "title": "任务标题",
+        "description": "任务描述",
+        "paths": "允许修改路径",
+        "interfaces": "接口要求",
+        "acceptance": "验收标准",
+        "extra": "额外上下文",
+        "paths_none": "(未限制)",
+        "doc_intro": "以下是当前接口注册表（Markdown，唯一事实来源），"
+        "请直接以此为准，不要猜测接口，也不需要再执行 pull-interfaces：",
+        "no_interfaces": "（当前项目还没有已注册接口）",
+        "constraints_title": "执行约束（必须遵守）：",
+        "c_worktree": "- 当前工作目录是独立的 Git Worktree；只允许创建或修改：{allowed}",
+        "c_git": "- 不要修改 .git、.teamcode 目录；不要提交、不要执行 git push。",
+        "c_commands": "- 你可以使用 Bash 运行 pytest / python / git status 等命令。"
+        "实现完成后请运行相关测试；如果测试失败，请自行定位并修复，"
+        "直到通过或确认无法修复。",
+        "c_summary": "- 完成后用一两句话说明修改了哪些文件、测试结果。",
+    },
+    "en": {
+        "intro": "You are working on a development task for TeamCode Agent.",
+        "pull": "Before you start, pull and read the project interface docs; "
+        "if that command is unavailable, read docs/interface_contract.md.",
+        "source": "The pulled interface docs are the single source of truth. "
+        "Do not guess interface names, parameters, or return types.",
+        "task_id": "Task ID",
+        "title": "Task title",
+        "description": "Task description",
+        "paths": "Allowed paths",
+        "interfaces": "Interface requirements",
+        "acceptance": "Acceptance criteria",
+        "extra": "Extra context",
+        "paths_none": "(unrestricted)",
+        "doc_intro": "Below is the current interface registry (Markdown, the "
+        "single source of truth). Use it directly; do not guess interfaces "
+        "and do not re-run pull-interfaces:",
+        "no_interfaces": "(No interfaces are registered for this project yet)",
+        "constraints_title": "Execution constraints (mandatory):",
+        "c_worktree": "- Your working directory is an isolated Git worktree. "
+        "You may only create or modify: {allowed}",
+        "c_git": "- Do not modify .git or .teamcode; do not commit and do not run git push.",
+        "c_commands": "- You may run pytest / python / git status via Bash. "
+        "After implementing, run the relevant tests; if they fail, diagnose "
+        "and fix them until they pass or you confirm they cannot be fixed.",
+        "c_summary": "- When done, briefly state which files you changed and the test results.",
+    },
+}
+
+
+def prompt_copy(lang: str | None) -> dict[str, str]:
+    return _PROMPT_COPY.get(lang or "zh", _PROMPT_COPY["zh"])
+
+
+def task_prompt(
+    task: TaskSpec, extra_context: str = "", *, lang: str = "zh"
+) -> str:
+    copy = prompt_copy(lang)
     lines = [
-        "你正在执行 TeamCode Agent 的开发任务。",
-        "开始前先拉取并阅读项目接口文档；如果命令不可用，则阅读 docs/interface_contract.md。",
-        "接口定义以拉取到的文档为唯一事实来源，不要凭空猜测接口。",
-        f"任务 ID：{task.task_id}",
-        f"任务标题：{task.title}",
-        f"任务描述：{task.description}",
-        f"允许修改路径：{', '.join(task.allowed_paths)}",
+        copy["intro"],
+        copy["pull"],
+        copy["source"],
+        f'{copy["task_id"]}: {task.task_id}',
+        f'{copy["title"]}: {task.title}',
+        f'{copy["description"]}: {task.description}',
+        f'{copy["paths"]}: {", ".join(task.allowed_paths)}',
     ]
     if task.interface_requirements:
-        lines.append("接口要求：" + "; ".join(task.interface_requirements))
+        lines.append(
+            f'{copy["interfaces"]}: ' + "; ".join(task.interface_requirements)
+        )
     if task.acceptance_criteria:
-        lines.append("验收标准：" + "; ".join(task.acceptance_criteria))
+        lines.append(
+            f'{copy["acceptance"]}: ' + "; ".join(task.acceptance_criteria)
+        )
     if extra_context:
-        lines.append("额外上下文：" + extra_context)
+        lines.append(f'{copy["extra"]}: {extra_context}')
     return "\n".join(lines)
+
+
+def agent_prompt(
+    task: TaskSpec,
+    interface_doc: str = "",
+    *,
+    prompt: str | None = None,
+    lang: str = "zh",
+) -> str:
+    """完整 Agent 提示词：任务 + 注入的接口文档 + 执行约束。"""
+    copy = prompt_copy(lang)
+    header = prompt or task_prompt(task, lang=lang)
+    allowed = ", ".join(task.allowed_paths) or copy["paths_none"]
+    constraints = "\n".join(
+        [
+            copy["constraints_title"],
+            copy["c_worktree"].format(allowed=allowed),
+            copy["c_git"],
+            copy["c_commands"],
+            copy["c_summary"],
+        ]
+    )
+    return "\n\n".join(
+        [
+            header,
+            copy["doc_intro"],
+            interface_doc or copy["no_interfaces"],
+            constraints,
+        ]
+    )

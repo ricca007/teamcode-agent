@@ -12,11 +12,14 @@ import {
   type JoinRequestRow,
   type MemberRow,
 } from "../api/client";
+import { useLocale, useT } from "../i18n";
 import { useAppStore } from "../store/useAppStore";
 import type { Task } from "../types";
 import { ErrorBanner } from "./States";
 
 export function TeamPanel() {
+  const t = useT();
+  const locale = useLocale();
   const projectId = useAppStore((state) => state.projectId);
   const tasks = useAppStore((state) => state.tasks);
   const load = useAppStore((state) => state.load);
@@ -59,7 +62,7 @@ export function TeamPanel() {
       return;
     }
     setOutline(await file.text());
-    setNotice(`已载入大纲：${file.name}`);
+    setNotice(t("team.outlineLoaded", { file: file.name }));
   };
 
   const handlePlan = async (event: FormEvent<HTMLFormElement>) => {
@@ -72,8 +75,8 @@ export function TeamPanel() {
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean);
-      await submitRequirements(projectId, outline, roleList);
-      setNotice("已根据大纲生成任务，可在任务看板分配或直接运行");
+      await submitRequirements(projectId, outline, roleList, "plan", locale);
+      setNotice(t("team.generated"));
       await load(true);
     } catch (planError) {
       setError(errorMessage(planError));
@@ -91,7 +94,7 @@ export function TeamPanel() {
         .map((item) => item.trim())
         .filter(Boolean);
       await approveJoinRequest(projectId, row.request_id, areaList);
-      setNotice(`已批准 ${row.display_name} 加入团队`);
+      setNotice(t("team.approved", { name: row.display_name }));
       await refresh();
       await load(true);
     } catch (approveError) {
@@ -106,7 +109,7 @@ export function TeamPanel() {
     setError(null);
     try {
       await rejectJoinRequest(projectId, row.request_id);
-      setNotice(`已拒绝 ${row.display_name}`);
+      setNotice(t("team.rejected", { name: row.display_name }));
       await refresh();
     } catch (rejectError) {
       setError(errorMessage(rejectError));
@@ -123,7 +126,7 @@ export function TeamPanel() {
     setError(null);
     try {
       await assignTask(projectId, taskId, userId);
-      setNotice("任务已重新分配");
+      setNotice(t("team.reassigned"));
       await load(true);
     } catch (assignError) {
       setError(errorMessage(assignError));
@@ -144,9 +147,9 @@ export function TeamPanel() {
       );
       const total = result.interfaces?.total_interfaces;
       setNotice(
-        `已合并 ${task.task_id}；接口注册表已刷新${
-          total !== undefined ? `（当前 ${total} 个接口）` : ""
-        }`,
+        total !== undefined
+          ? t("team.mergedWithCount", { task: task.task_id, total })
+          : t("team.merged", { task: task.task_id }),
       );
       await load(true);
     } catch (mergeError) {
@@ -162,12 +165,9 @@ export function TeamPanel() {
     <section className="page">
       <header className="page-head">
         <div>
-          <p className="eyebrow">队长工作台</p>
-          <h1>大纲、成员与任务分配</h1>
-          <p className="page-head__desc">
-            粘贴或上传 Markdown 大纲生成任务；批准成员加入后，把 A/B/C
-            角色任务分配给具体成员。
-          </p>
+          <p className="eyebrow">{t("team.eyebrow")}</p>
+          <h1>{t("team.title")}</h1>
+          <p className="page-head__desc">{t("team.desc")}</p>
         </div>
       </header>
 
@@ -181,20 +181,20 @@ export function TeamPanel() {
       <div className="team-grid">
         <div className="panel">
           <div className="panel__head">
-            <p className="eyebrow">项目大纲</p>
+            <p className="eyebrow">{t("team.outline")}</p>
           </div>
           <form className="auth-form" onSubmit={handlePlan}>
             <label>
-              粘贴 Markdown 大纲
+              {t("team.pasteOutline")}
               <textarea
                 value={outline}
                 onChange={(event) => setOutline(event.target.value)}
-                placeholder="# 在线商城&#10;- 用户管理&#10;- 商品管理&#10;- 订单管理"
+                placeholder={t("team.outlinePlaceholder")}
                 required
               />
             </label>
             <label>
-              上传 .md 文件
+              {t("team.uploadFile")}
               <input
                 ref={fileRef}
                 type="file"
@@ -203,7 +203,7 @@ export function TeamPanel() {
               />
             </label>
             <label>
-              占位角色（逗号分隔）
+              {t("team.roles")}
               <input
                 value={roles}
                 onChange={(event) => setRoles(event.target.value)}
@@ -211,18 +211,18 @@ export function TeamPanel() {
               />
             </label>
             <button type="submit" className="btn btn--primary" disabled={busy}>
-              {busy ? "生成中" : "生成任务"}
+              {busy ? t("team.generating") : t("team.generate")}
             </button>
           </form>
         </div>
 
         <div className="panel">
           <div className="panel__head">
-            <p className="eyebrow">加入申请</p>
+            <p className="eyebrow">{t("team.joinRequests")}</p>
             <span className="mono panel__count">{pending.length}</span>
           </div>
           {pending.length === 0 ? (
-            <p className="auth-hint">暂无待审批申请。</p>
+            <p className="auth-hint">{t("team.noRequests")}</p>
           ) : (
             <div className="team-list">
               {pending.map((row) => (
@@ -240,7 +240,7 @@ export function TeamPanel() {
                         [row.request_id]: event.target.value,
                       }))
                     }
-                    placeholder="负责模块，如 user,order"
+                    placeholder={t("team.areasPlaceholder")}
                   />
                   <div className="auth-actions">
                     <button
@@ -249,7 +249,7 @@ export function TeamPanel() {
                       disabled={busy}
                       onClick={() => void handleApprove(row)}
                     >
-                      批准
+                      {t("team.approve")}
                     </button>
                     <button
                       type="button"
@@ -257,7 +257,7 @@ export function TeamPanel() {
                       disabled={busy}
                       onClick={() => void handleReject(row)}
                     >
-                      拒绝
+                      {t("team.reject")}
                     </button>
                   </div>
                 </div>
@@ -269,11 +269,11 @@ export function TeamPanel() {
 
       <div className="panel">
         <div className="panel__head">
-          <p className="eyebrow">成员与任务分配</p>
+          <p className="eyebrow">{t("team.members")}</p>
           <span className="mono panel__count">{tasks.length}</span>
         </div>
         {tasks.length === 0 ? (
-          <p className="auth-hint">还没有任务，先用大纲生成。</p>
+          <p className="auth-hint">{t("team.noTasks")}</p>
         ) : (
           <div className="team-list">
             {tasks.map((task) => (
@@ -281,7 +281,10 @@ export function TeamPanel() {
                 <div>
                   <p className="team-row__name">{task.title}</p>
                   <p className="auth-hint mono">
-                    {task.task_id} · 当前：{task.owner_name ?? task.owner_id}
+                    {task.task_id} ·{" "}
+                    {t("team.current", {
+                      owner: task.owner_name ?? task.owner_id,
+                    })}
                   </p>
                 </div>
                 <select
@@ -299,7 +302,13 @@ export function TeamPanel() {
                     .filter((member) => member.user_id !== task.owner_id)
                     .map((member) => (
                       <option key={member.user_id} value={member.user_id}>
-                        {member.name}（{member.role}）
+                        {t("shell.teamOption", {
+                          name: member.name,
+                          role:
+                            member.role === "owner"
+                              ? t("role.leader")
+                              : t("role.member"),
+                        })}
                       </option>
                     ))}
                 </select>
@@ -310,7 +319,7 @@ export function TeamPanel() {
                     disabled={busy}
                     onClick={() => void handleMerge(task)}
                   >
-                    合并
+                    {t("team.merge")}
                   </button>
                 ) : null}
               </div>

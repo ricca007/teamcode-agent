@@ -7,19 +7,21 @@ import {
   sendTaskMessage,
   type TaskAction,
 } from "../api/client";
+import { useT, type TKey } from "../i18n";
 import { formatClock } from "../lib/format";
 import { useAppStore } from "../store/useAppStore";
 import type { ConnectionState } from "../types";
 import { EmptyState, ErrorBanner, LoadingPanel } from "./States";
 import { StatusPill } from "./StatusPill";
 
-const CONNECTION_TEXT: Record<ConnectionState, string> = {
-  open: "实时推送",
-  connecting: "连接中",
-  closed: "已断开",
+const CONNECTION_TEXT: Record<ConnectionState, TKey> = {
+  open: "conn.live",
+  connecting: "conn.connectingShort",
+  closed: "conn.closedShort",
 };
 
 export function AgentPanel() {
+  const t = useT();
   const sessions = useAppStore((state) => state.sessions);
   const tasks = useAppStore((state) => state.tasks);
   const logs = useAppStore((state) => state.logs);
@@ -71,12 +73,17 @@ export function AgentPanel() {
     setNotice(null);
     try {
       await controlTask(activeSession.task_id, action);
-      const labels: Record<TaskAction, string> = {
-        pause: "已暂停",
-        resume: "已恢复",
-        terminate: "已终止",
+      const labels: Record<TaskAction, TKey> = {
+        pause: "agents.actionPaused",
+        resume: "agents.actionResumed",
+        terminate: "agents.actionTerminated",
       };
-      setNotice(`${taskTitle(activeSession.task_id)} ${labels[action]}`);
+      setNotice(
+        t("agents.controlDone", {
+          title: taskTitle(activeSession.task_id),
+          action: t(labels[action]),
+        }),
+      );
       await load();
     } catch (controlError) {
       setNotice(errorMessage(controlError));
@@ -107,7 +114,7 @@ export function AgentPanel() {
     try {
       await sendTaskMessage(activeSession.task_id, text);
       setMessage("");
-      setNotice("消息已发送，Agent 输出会实时出现在日志里");
+      setNotice(t("agents.messageSent"));
       await load(true);
     } catch (sendError) {
       setNotice(errorMessage(sendError));
@@ -120,15 +127,13 @@ export function AgentPanel() {
     <section className="page">
       <header className="page-head">
         <div>
-          <p className="eyebrow">运行时</p>
-          <h1>Agent 会话</h1>
-          <p className="page-head__desc">
-            每个任务在独立 Worktree 中运行一个 Coding Agent 会话，日志按会话实时推送。
-          </p>
+          <p className="eyebrow">{t("agents.eyebrow")}</p>
+          <h1>{t("nav.agents")}</h1>
+          <p className="page-head__desc">{t("agents.desc")}</p>
         </div>
         <div className="page-head__actions">
           <button type="button" className="btn btn--ghost" onClick={() => void load()}>
-            刷新状态
+            {t("agents.refresh")}
           </button>
         </div>
       </header>
@@ -139,19 +144,19 @@ export function AgentPanel() {
 
       {loading && sessions.length === 0 ? (
         <div className="panel">
-          <LoadingPanel label="正在加载会话与日志" />
+          <LoadingPanel label={t("agents.loading")} />
         </div>
       ) : (
         <div className="split split--agent">
           <div className="panel">
             <div className="panel__head">
-              <p className="eyebrow">活跃会话</p>
+              <p className="eyebrow">{t("agents.activeSessions")}</p>
               <span className="mono panel__count">{sessions.length}</span>
             </div>
             {sessions.length === 0 ? (
               <EmptyState
-                title="暂无 Agent 会话"
-                description="在任务看板中启动任务后，这里会显示每个会话的工作区与状态。"
+                title={t("agents.emptyTitle")}
+                description={t("agents.emptyDesc")}
               />
             ) : (
               <div className="session-list">
@@ -189,7 +194,7 @@ export function AgentPanel() {
             )}
             <div className="panel__foot">
               <p className="panel__hint">
-                仅自动加载最近 {RECENT_TASK_LIMIT} 个任务的会话与日志，更早的按需加载。
+                {t("agents.recentHint", { limit: RECENT_TASK_LIMIT })}
               </p>
               <button
                 type="button"
@@ -197,7 +202,7 @@ export function AgentPanel() {
                 disabled={detailLoading || remainingTasks === 0}
                 onClick={() => void loadMoreSessions()}
               >
-                {detailLoading ? "加载中…" : "加载更早会话"}
+                {detailLoading ? t("common.loading") : t("agents.loadMore")}
               </button>
             </div>
           </div>
@@ -205,9 +210,11 @@ export function AgentPanel() {
           <div className="panel log-panel">
             <header className="log-panel__head">
               <div>
-                <p className="eyebrow">会话日志</p>
+                <p className="eyebrow">{t("agents.sessionLogs")}</p>
                 <p className="log-panel__title">
-                  {activeSession ? taskTitle(activeSession.task_id) : "全部会话"}
+                  {activeSession
+                    ? taskTitle(activeSession.task_id)
+                    : t("agents.allSessions")}
                 </p>
                 {activeSession ? (
                   <div className="session-actions">
@@ -217,7 +224,7 @@ export function AgentPanel() {
                       disabled={controlling || !canPause}
                       onClick={() => void handleControl("pause")}
                     >
-                      暂停
+                      {t("agents.pause")}
                     </button>
                     <button
                       type="button"
@@ -225,7 +232,7 @@ export function AgentPanel() {
                       disabled={controlling || !canResume}
                       onClick={() => void handleControl("resume")}
                     >
-                      恢复
+                      {t("agents.resume")}
                     </button>
                     <button
                       type="button"
@@ -233,7 +240,7 @@ export function AgentPanel() {
                       disabled={controlling || !canTerminate}
                       onClick={() => void handleControl("terminate")}
                     >
-                      终止
+                      {t("agents.terminate")}
                     </button>
                   </div>
                 ) : null}
@@ -241,7 +248,7 @@ export function AgentPanel() {
               <div className="log-panel__tools">
                 <span className={`conn conn--${connection}`}>
                   <span className="conn__dot" aria-hidden="true" />
-                  {CONNECTION_TEXT[connection]}
+                  {t(CONNECTION_TEXT[connection])}
                 </span>
                 <label className="checkbox">
                   <input
@@ -249,7 +256,7 @@ export function AgentPanel() {
                     checked={follow}
                     onChange={(event) => setFollow(event.target.checked)}
                   />
-                  自动滚动
+                  {t("agents.autoScroll")}
                 </label>
               </div>
             </header>
@@ -262,8 +269,8 @@ export function AgentPanel() {
 
             {visibleLogs.length === 0 ? (
               <EmptyState
-                title="这个会话还没有日志"
-                description="Agent 启动后，stdout 与 stderr 会按时间顺序显示在这里。"
+                title={t("agents.noLogsTitle")}
+                description={t("agents.noLogsDesc")}
               />
             ) : (
               <div
@@ -271,7 +278,7 @@ export function AgentPanel() {
                 ref={streamRef}
                 role="log"
                 aria-live="polite"
-                aria-label="Agent 实时日志"
+                aria-label={t("agents.liveLogs")}
               >
                 {visibleLogs.map((log) => (
                   <div
@@ -297,18 +304,18 @@ export function AgentPanel() {
                   onChange={(event) => setMessage(event.target.value)}
                   placeholder={
                     sessionBusy
-                      ? "Agent 正在执行，完成后可继续对话"
-                      : "继续让 Agent 修改代码，例如：把 create 改成异步"
+                      ? t("agents.chatBusy")
+                      : t("agents.chatPlaceholder")
                   }
                   disabled={sessionBusy || sending}
-                  aria-label="发送给 Agent 的消息"
+                  aria-label={t("agents.chatAria")}
                 />
                 <button
                   type="submit"
                   className="btn btn--primary"
                   disabled={sessionBusy || sending || !message.trim()}
                 >
-                  {sending ? "发送中" : "发送"}
+                  {sending ? t("agents.sending") : t("agents.send")}
                 </button>
               </form>
             ) : null}

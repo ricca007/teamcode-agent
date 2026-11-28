@@ -1,21 +1,20 @@
 import { useMemo, useState } from "react";
 
 import { downloadInterfaceMarkdown, errorMessage, refreshInterfaces } from "../api/client";
-import {
-  KIND_LABEL,
-  interfaceToMarkdown,
-  shortHash,
-  signatureOf,
-} from "../lib/format";
+import { KIND_KEY, useLocale, useT, type TKey } from "../i18n";
+import { interfaceToMarkdown, shortHash, signatureOf } from "../lib/format";
 import { useAppStore } from "../store/useAppStore";
 import type { InterfaceInfo } from "../types";
 import { EmptyState, ErrorBanner, LoadingPanel } from "./States";
 
-const KIND_FILTERS: Array<{ value: InterfaceInfo["kind"] | "all"; label: string }> = [
-  { value: "all", label: "全部" },
-  { value: "function", label: "函数" },
-  { value: "method", label: "方法" },
-  { value: "class", label: "类" },
+const KIND_FILTERS: Array<{
+  value: InterfaceInfo["kind"] | "all";
+  label: TKey;
+}> = [
+  { value: "all", label: "kind.all" },
+  { value: "function", label: "kind.function" },
+  { value: "method", label: "kind.method" },
+  { value: "class", label: "kind.class" },
 ];
 
 function SearchIcon() {
@@ -37,6 +36,8 @@ function SearchIcon() {
 }
 
 export function InterfaceBrowser() {
+  const t = useT();
+  const locale = useLocale();
   const interfaces = useAppStore((state) => state.interfaces);
   const loading = useAppStore((state) => state.loading);
   const error = useAppStore((state) => state.error);
@@ -79,7 +80,7 @@ export function InterfaceBrowser() {
     try {
       await refreshInterfaces(projectId);
       await load();
-      setNotice("接口已重新扫描");
+      setNotice(t("interfaces.rescanned"));
     } catch (scanError) {
       setNotice(errorMessage(scanError));
     } finally {
@@ -93,7 +94,7 @@ export function InterfaceBrowser() {
       setCopied(target);
       window.setTimeout(() => setCopied(null), 1600);
     } catch {
-      setNotice("复制失败，请手动选择文本");
+      setNotice(t("interfaces.copyFailed"));
     }
   }
 
@@ -101,12 +102,9 @@ export function InterfaceBrowser() {
     <section className="page">
       <header className="page-head">
         <div>
-          <p className="eyebrow">接口注册中心</p>
-          <h1>接口浏览</h1>
-          <p className="page-head__desc">
-            AST 自动提取的函数签名、参数与版本。每位成员的 Coding Agent
-            通过同一份文档获取接口契约。
-          </p>
+          <p className="eyebrow">{t("interfaces.eyebrow")}</p>
+          <h1>{t("nav.interfaces")}</h1>
+          <p className="page-head__desc">{t("interfaces.desc")}</p>
         </div>
         <div className="page-head__actions">
           <button
@@ -115,16 +113,16 @@ export function InterfaceBrowser() {
             onClick={() => void handleRescan()}
             disabled={scanning}
           >
-            {scanning ? "扫描中" : "重新扫描"}
+            {scanning ? t("interfaces.scanning") : t("interfaces.rescan")}
           </button>
           <button
             type="button"
             className="btn btn--primary"
-            onClick={() => void downloadInterfaceMarkdown(projectId).catch(
+            onClick={() => void downloadInterfaceMarkdown(projectId, locale).catch(
               (downloadError) => setNotice(errorMessage(downloadError)),
             )}
           >
-            下载 Markdown
+            {t("interfaces.download")}
           </button>
         </div>
       </header>
@@ -141,7 +139,7 @@ export function InterfaceBrowser() {
 
       {loading && interfaces.length === 0 ? (
         <div className="panel">
-          <LoadingPanel label="正在加载接口注册中心" />
+          <LoadingPanel label={t("interfaces.loading")} />
         </div>
       ) : (
         <div className="split split--interfaces">
@@ -149,18 +147,18 @@ export function InterfaceBrowser() {
             <div className="list-panel__tools">
               <label className="search">
                 <SearchIcon />
-                <span className="sr-only">搜索接口</span>
+                <span className="sr-only">{t("interfaces.search")}</span>
                 <input
                   type="search"
                   value={query}
-                  placeholder="搜索名称、模块或路径"
+                  placeholder={t("interfaces.searchPlaceholder")}
                   onChange={(event) => setInterfaceQuery(event.target.value)}
                 />
               </label>
               <div
                 className="segmented segmented--sm"
                 role="group"
-                aria-label="接口类型筛选"
+                aria-label={t("interfaces.kindFilter")}
               >
                 {KIND_FILTERS.map((filter) => (
                   <button
@@ -169,14 +167,14 @@ export function InterfaceBrowser() {
                     aria-pressed={kind === filter.value}
                     onClick={() => setInterfaceKind(filter.value)}
                   >
-                    {filter.label}
+                    {t(filter.label)}
                   </button>
                 ))}
               </div>
             </div>
 
             <div className="panel__head">
-              <p className="eyebrow">接口列表</p>
+              <p className="eyebrow">{t("interfaces.list")}</p>
               <span className="mono panel__count">
                 {filtered.length} / {interfaces.length}
               </span>
@@ -185,11 +183,15 @@ export function InterfaceBrowser() {
             <div className="list-scroll">
               {filtered.length === 0 ? (
                 <EmptyState
-                  title={interfaces.length === 0 ? "接口注册中心暂无数据" : "没有匹配的接口"}
+                  title={
+                    interfaces.length === 0
+                      ? t("interfaces.emptyTitle")
+                      : t("interfaces.mismatchTitle")
+                  }
                   description={
                     interfaces.length === 0
-                      ? "运行 teamcode pull-interfaces，或点击重新扫描。"
-                      : "换一个关键词，或把类型筛选切回全部。"
+                      ? t("interfaces.emptyDesc")
+                      : t("interfaces.mismatchDesc")
                   }
                 />
               ) : (
@@ -205,7 +207,7 @@ export function InterfaceBrowser() {
                     >
                       <span className="iface-row__name mono">{info.name}</span>
                       <span className="iface-row__meta">
-                        <span>{KIND_LABEL[info.kind]}</span>
+                        <span>{t(KIND_KEY[info.kind])}</span>
                         <span className="mono">v{info.version}</span>
                       </span>
                       <span className="iface-row__module mono" title={info.file_path}>
@@ -224,7 +226,7 @@ export function InterfaceBrowser() {
                 <header className="detail-head">
                   <div>
                     <p className="eyebrow">
-                      {KIND_LABEL[selected.kind]} · {selected.module}
+                      {t(KIND_KEY[selected.kind])} · {selected.module}
                     </p>
                     <h2 className="detail-head__name mono">{selected.name}</h2>
                   </div>
@@ -236,10 +238,12 @@ export function InterfaceBrowser() {
                   <button
                     type="button"
                     className="btn btn--tiny"
-                    aria-label="复制函数签名"
+                    aria-label={t("interfaces.copySignatureAria")}
                     onClick={() => void handleCopy(signatureOf(selected), "signature")}
                   >
-                    {copied === "signature" ? "已复制" : "复制签名"}
+                    {copied === "signature"
+                      ? t("common.copied")
+                      : t("interfaces.copySignature")}
                   </button>
                 </div>
 
@@ -247,28 +251,30 @@ export function InterfaceBrowser() {
                   <p className="detail-doc">{selected.docstring}</p>
                 ) : (
                   <p className="detail-doc detail-doc--muted">
-                    这个接口还没有 docstring。
+                    {t("interfaces.noDocstring")}
                   </p>
                 )}
 
                 <section className="detail-section">
-                  <h3 className="section-title">参数</h3>
+                  <h3 className="section-title">{t("interfaces.params")}</h3>
                   {selected.params.length === 0 ? (
-                    <p className="muted">无参数</p>
+                    <p className="muted">{t("interfaces.noParams")}</p>
                   ) : (
                     <table className="param-table">
                       <thead>
                         <tr>
-                          <th scope="col">参数</th>
-                          <th scope="col">类型</th>
-                          <th scope="col">默认值</th>
+                          <th scope="col">{t("interfaces.param")}</th>
+                          <th scope="col">{t("interfaces.type")}</th>
+                          <th scope="col">{t("interfaces.default")}</th>
                         </tr>
                       </thead>
                       <tbody>
                         {selected.params.map((param) => (
                           <tr key={param.name}>
                             <td className="mono">{param.name}</td>
-                            <td className="mono">{param.annotation ?? "未标注"}</td>
+                            <td className="mono">
+                              {param.annotation ?? t("interfaces.notAnnotated")}
+                            </td>
                             <td className="mono">{param.default ?? "-"}</td>
                           </tr>
                         ))}
@@ -278,45 +284,51 @@ export function InterfaceBrowser() {
                 </section>
 
                 <section className="detail-section">
-                  <h3 className="section-title">元数据</h3>
+                  <h3 className="section-title">{t("interfaces.metadata")}</h3>
                   <dl className="meta-grid">
                     <div>
-                      <dt>模块</dt>
+                      <dt>{t("interfaces.module")}</dt>
                       <dd className="mono">{selected.module}</dd>
                     </div>
                     <div>
-                      <dt>位置</dt>
+                      <dt>{t("interfaces.location")}</dt>
                       <dd className="mono">
                         {selected.file_path}
                         {selected.lineno ? `:${selected.lineno}` : ""}
                       </dd>
                     </div>
                     <div>
-                      <dt>返回类型</dt>
-                      <dd className="mono">{selected.returns ?? "无"}</dd>
-                    </div>
-                    <div>
-                      <dt>提交</dt>
-                      <dd className="mono">{shortHash(selected.commit_hash)}</dd>
-                    </div>
-                    <div>
-                      <dt>装饰器</dt>
+                      <dt>{t("interfaces.returns")}</dt>
                       <dd className="mono">
-                        {selected.decorators?.length
-                          ? selected.decorators.map((item) => `@${item}`).join(", ")
-                          : "无"}
+                        {selected.returns ?? t("common.none")}
                       </dd>
                     </div>
                     <div>
-                      <dt>异步</dt>
-                      <dd>{selected.is_async ? "是" : "否"}</dd>
+                      <dt>{t("interfaces.commit")}</dt>
+                      <dd className="mono">
+                        {shortHash(selected.commit_hash, locale)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{t("interfaces.decorators")}</dt>
+                      <dd className="mono">
+                        {selected.decorators?.length
+                          ? selected.decorators.map((item) => `@${item}`).join(", ")
+                          : t("common.none")}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{t("interfaces.async")}</dt>
+                      <dd>{selected.is_async ? t("common.yes") : t("common.no")}</dd>
                     </div>
                   </dl>
                 </section>
 
                 {selected.dependencies.length > 0 ? (
                   <section className="detail-section">
-                    <h3 className="section-title">依赖接口</h3>
+                    <h3 className="section-title">
+                      {t("interfaces.dependencies")}
+                    </h3>
                     <ul className="dep-list">
                       {selected.dependencies.map((dependency) => (
                         <li key={dependency} className="mono">
@@ -332,17 +344,22 @@ export function InterfaceBrowser() {
                     type="button"
                     className="btn btn--ghost"
                     onClick={() =>
-                      void handleCopy(interfaceToMarkdown(selected), "markdown")
+                      void handleCopy(
+                        interfaceToMarkdown(selected, locale),
+                        "markdown",
+                      )
                     }
                   >
-                    {copied === "markdown" ? "已复制 Markdown" : "复制 Markdown"}
+                    {copied === "markdown"
+                      ? t("interfaces.markdownCopied")
+                      : t("interfaces.copyMarkdown")}
                   </button>
                 </div>
               </article>
             ) : (
               <EmptyState
-                title="选择一个接口"
-                description="左侧列表展示由 AST 提取的函数、方法与类签名。"
+                title={t("interfaces.selectTitle")}
+                description={t("interfaces.selectDesc")}
               />
             )}
           </div>

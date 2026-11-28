@@ -1,63 +1,73 @@
 /** 小型展示格式化工具，避免在组件里散落重复逻辑。 */
 
-import type { AgentStatus, InterfaceInfo, TaskStatus } from "../types";
+import type { InterfaceInfo } from "../types";
+import {
+  getLocale,
+  translate,
+  type Locale,
+  type TKey,
+} from "../i18n/dict";
 
-export const STATUS_LABEL: Record<TaskStatus | AgentStatus, string> = {
-  // A 的任务状态
-  planned: "待处理",
-  in_progress: "进行中",
-  blocked: "阻塞",
-  completed: "已完成",
-  cancelled: "已取消",
-  // B 的 Agent 会话状态
-  pending: "待启动",
-  running: "运行中",
-  paused: "已暂停",
-  succeeded: "已完成",
-  failed: "失败",
-  terminated: "已终止",
+const clockFormatters: Record<Locale, Intl.DateTimeFormat> = {
+  zh: new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }),
+  en: new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }),
 };
 
-export const KIND_LABEL: Record<InterfaceInfo["kind"], string> = {
-  function: "函数",
-  method: "方法",
-  class: "类",
+const dateTimeFormatters: Record<Locale, Intl.DateTimeFormat> = {
+  zh: new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }),
+  en: new Intl.DateTimeFormat("en-US", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }),
 };
 
-const clockFormatter = new Intl.DateTimeFormat("zh-CN", {
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  hour12: false,
-});
-
-const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-});
-
-export function formatClock(value: string): string {
+export function formatClock(
+  value: string,
+  locale: Locale = getLocale(),
+): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return "--:--:--";
   }
-  return clockFormatter.format(date);
+  return clockFormatters[locale].format(date);
 }
 
-export function formatDateTime(value: string): string {
+export function formatDateTime(
+  value: string,
+  locale: Locale = getLocale(),
+): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return "时间未知";
+    return translate("format.timeUnknown", undefined, locale);
   }
-  return dateTimeFormatter.format(date);
+  return dateTimeFormatters[locale].format(date);
 }
 
-export function shortHash(hash: string | null): string {
+export function shortHash(
+  hash: string | null,
+  locale: Locale = getLocale(),
+): string {
   if (!hash) {
-    return "工作区未提交";
+    return translate("format.uncommitted", undefined, locale);
   }
   return hash.slice(0, 7);
 }
@@ -96,7 +106,12 @@ export function signatureOf(info: InterfaceInfo): string {
   return info.returns ? `${signature} -> ${info.returns}` : signature;
 }
 
-export function interfaceToMarkdown(info: InterfaceInfo): string {
+export function interfaceToMarkdown(
+  info: InterfaceInfo,
+  locale: Locale = getLocale(),
+): string {
+  const label = (key: TKey, value: string) =>
+    `- ${translate(key, undefined, locale)}：${value}`;
   const rows = [
     `### \`${info.name}\``,
     "",
@@ -104,13 +119,13 @@ export function interfaceToMarkdown(info: InterfaceInfo): string {
     signatureOf(info),
     "```",
     "",
-    `- 类型：${info.kind}`,
-    `- 模块：\`${info.module}\``,
-    `- 文件：\`${info.file_path}\``,
-    `- 版本：v${info.version}`,
+    label("format.mdType", info.kind),
+    label("format.mdModule", `\`${info.module}\``),
+    label("format.mdFile", `\`${info.file_path}\``),
+    label("format.mdVersion", `v${info.version}`),
   ];
   if (info.commit_hash) {
-    rows.push(`- 提交：\`${info.commit_hash}\``);
+    rows.push(label("format.mdCommit", `\`${info.commit_hash}\``));
   }
   if (info.docstring) {
     rows.push("", info.docstring);

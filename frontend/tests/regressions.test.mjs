@@ -17,13 +17,22 @@ function moduleUrl(source) {
   return `data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`;
 }
 
+// i18n 字典是纯数据模块，测试里内联成 data URL，供 client/store/format 解析。
+const dictUrl = moduleUrl(
+  await readFile(new URL("../src/i18n/dict.ts", import.meta.url), "utf8"),
+);
+
+function withDict(source) {
+  return source.replaceAll('"../i18n/dict"', JSON.stringify(dictUrl));
+}
+
 test("Markdown download uses the same authentication as the JSON API", async () => {
   const source = await readFile(new URL("../src/api/client.ts", import.meta.url), "utf8");
-  const client = await import(moduleUrl(source));
+  const client = await import(moduleUrl(withDict(source)));
   client.setAuthToken("tc_test_token");
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
-    assert.match(url, /interfaces\?format=markdown$/);
+    assert.match(url, /interfaces\?format=markdown&lang=zh$/);
     assert.equal(init.headers.Authorization, "Bearer tc_test_token");
     return new Response("# Current interfaces", { headers: { "Content-Type": "text/markdown" } });
   };
@@ -50,7 +59,9 @@ async function storeWithPendingRequests() {
   let source = await readFile(new URL("../src/store/useAppStore.ts", import.meta.url), "utf8");
   source = source.replace('"zustand"', JSON.stringify(import.meta.resolve("zustand")))
     .replace('"../api/client"', JSON.stringify(clientUrl));
-  const { useAppStore } = await import(moduleUrl(source + `\n// unique ${Math.random()}`));
+  const { useAppStore } = await import(
+    moduleUrl(withDict(source) + `\n// unique ${Math.random()}`)
+  );
   return { store: useAppStore, pending, pendingInterfaces };
 }
 
@@ -90,7 +101,7 @@ test("leaders see newly planned tasks and reassigned members lose the old task",
 
 test("a task without a session is not reported as a failed request", async () => {
   const source = await readFile(new URL("../src/api/client.ts", import.meta.url), "utf8");
-  const client = await import(moduleUrl(source));
+  const client = await import(moduleUrl(withDict(source)));
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     if (url.endsWith("/status")) {
@@ -115,7 +126,7 @@ test("a task without a session is not reported as a failed request", async () =>
 
 test("frontend signature preserves Python argument separators", async () => {
   const source = await readFile(new URL("../src/lib/format.ts", import.meta.url), "utf8");
-  const { signatureOf } = await import(moduleUrl(source));
+  const { signatureOf } = await import(moduleUrl(withDict(source)));
   assert.equal(signatureOf({ name: "lookup", kind: "function", returns: "str", params: [
     { name: "key", annotation: "str", default: null, kind: "positional_only" },
     { name: "strict", annotation: "bool", default: "True", kind: "keyword_only" },

@@ -14,6 +14,7 @@ import type {
   LogEntry,
   Task,
 } from "../types";
+import { translate, type Locale } from "../i18n/dict";
 
 const rawApiBase = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
 
@@ -81,12 +82,18 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
       headers,
     });
   } catch {
-    throw new ApiError(`无法连接后端 ${API_BASE || "（同源）"}`, 0, "network_error");
+    throw new ApiError(
+      translate("api.networkError", {
+        base: API_BASE || translate("api.sameOrigin"),
+      }),
+      0,
+      "network_error",
+    );
   }
 
   if (!response.ok) {
     let code = `http_${response.status}`;
-    let message = `请求失败（HTTP ${response.status}）`;
+    let message = translate("api.httpError", { status: response.status });
     try {
       const body = (await response.json()) as {
         code?: string;
@@ -108,16 +115,22 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await (await request(path, init)).json()) as T;
 }
 
-export async function getInterfaceMarkdown(projectId: string): Promise<string> {
+export async function getInterfaceMarkdown(
+  projectId: string,
+  locale: Locale = "zh",
+): Promise<string> {
   const response = await request(
-    `/api/projects/${encodeURIComponent(projectId)}/interfaces?format=markdown`,
+    `/api/projects/${encodeURIComponent(projectId)}/interfaces?format=markdown&lang=${locale}`,
     { headers: { Accept: "text/markdown" } },
   );
   return response.text();
 }
 
-export async function downloadInterfaceMarkdown(projectId: string): Promise<void> {
-  const markdown = await getInterfaceMarkdown(projectId);
+export async function downloadInterfaceMarkdown(
+  projectId: string,
+  locale: Locale = "zh",
+): Promise<void> {
+  const markdown = await getInterfaceMarkdown(projectId, locale);
   const url = URL.createObjectURL(new Blob([markdown], { type: "text/markdown;charset=utf-8" }));
   const link = document.createElement("a");
   link.href = url;
@@ -168,11 +181,15 @@ export async function getAgents(): Promise<AgentInfo[]> {
 export async function runTask(
   taskId: string,
   agentName?: string,
+  locale: Locale = "zh",
 ): Promise<void> {
   await requestJson<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/run`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(agentName ? { agent_name: agentName } : {}),
+    body: JSON.stringify({
+      ...(agentName ? { agent_name: agentName } : {}),
+      locale,
+    }),
   });
 }
 
@@ -484,13 +501,14 @@ export async function submitRequirements(
   requirements: string,
   roles: string[],
   mode: "plan" | "replan" = "plan",
+  locale: Locale = "zh",
 ): Promise<unknown> {
   return requestJson<unknown>(
     `/api/projects/${encodeURIComponent(projectId)}/requirements`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ requirements, roles, mode }),
+      body: JSON.stringify({ requirements, roles, mode, locale }),
     },
   );
 }
@@ -606,17 +624,32 @@ export async function loadTaskDetail(taskId: string): Promise<TaskDetail> {
   if (sessionResult.status === "fulfilled") {
     session = sessionResult.value;
   } else if (!isNoSession(sessionResult.reason)) {
-    warnings.push(`任务 ${taskId} 会话不可用：${errorMessage(sessionResult.reason)}`);
+    warnings.push(
+      translate("api.sessionUnavailable", {
+        id: taskId,
+        message: errorMessage(sessionResult.reason),
+      }),
+    );
   }
   if (logsResult.status === "fulfilled") {
     logs = logsResult.value;
   } else {
-    warnings.push(`任务 ${taskId} 日志不可用：${errorMessage(logsResult.reason)}`);
+    warnings.push(
+      translate("api.logsUnavailable", {
+        id: taskId,
+        message: errorMessage(logsResult.reason),
+      }),
+    );
   }
   if (changesResult.status === "fulfilled") {
     changes = changesResult.value;
   } else {
-    warnings.push(`任务 ${taskId} 变更不可用：${errorMessage(changesResult.reason)}`);
+    warnings.push(
+      translate("api.changesUnavailable", {
+        id: taskId,
+        message: errorMessage(changesResult.reason),
+      }),
+    );
   }
 
   return { taskId, session, logs, changes, warnings };
@@ -647,14 +680,18 @@ export async function loadLiveBundle(projectId: string): Promise<LiveBundle> {
   try {
     tasks = await getTasks(projectId);
   } catch (error) {
-    warnings.push(`任务接口不可用：${errorMessage(error)}`);
+    warnings.push(
+      translate("api.tasksUnavailable", { message: errorMessage(error) }),
+    );
   }
 
   let interfaces: InterfaceInfo[] = [];
   try {
     interfaces = await getInterfaces(projectId);
   } catch (error) {
-    warnings.push(`接口注册中心不可用：${errorMessage(error)}`);
+    warnings.push(
+      translate("api.interfacesUnavailable", { message: errorMessage(error) }),
+    );
   }
 
   // 只探测最近的任务，避免页面初次加载发出过多请求
@@ -685,5 +722,5 @@ export function errorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
   }
-  return "未知错误";
+  return translate("api.unknown");
 }

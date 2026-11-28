@@ -9,6 +9,7 @@ import {
   type ProjectSummary,
   type TaskDetail,
 } from "../api/client";
+import { translate } from "../i18n/dict";
 import type {
   AgentSession,
   ChangeSet,
@@ -217,7 +218,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         loading: false,
         error:
           live.warnings.length > 0
-            ? `${live.warnings.join(" ")} 部分模块可能尚未上线。`
+            ? `${live.warnings.join(" ")} ${translate("store.partialModules")}`
             : null,
         selectedInterfaceId:
           selectedInterfaceId ?? live.interfaces[0]?.interface_id ?? null,
@@ -229,7 +230,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       console.error("[TeamCode] 加载项目数据失败", error);
       set({
         loading: false,
-        error: error instanceof Error ? error.message : "加载项目数据失败",
+        error:
+          error instanceof Error ? error.message : translate("store.loadFailed"),
       });
     }
   },

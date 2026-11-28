@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { useLocale, useT } from "../i18n";
 import { diffStats, formatDateTime, shortHash } from "../lib/format";
 import { useAppStore } from "../store/useAppStore";
 import type { ChangeSet } from "../types";
@@ -30,6 +31,8 @@ function ChangeCard({
   change: ChangeSet;
   taskTitle: string;
 }) {
+  const t = useT();
+  const locale = useLocale();
   const [expanded, setExpanded] = useState(false);
   const stats = diffStats(change.diff);
   const lines = change.diff.split("\n");
@@ -44,12 +47,16 @@ function ChangeCard({
           <p className="eyebrow">
             {taskTitle} · {change.task_id}
           </p>
-          <p className="change-card__commit mono">{shortHash(change.commit_hash)}</p>
+          <p className="change-card__commit mono">
+            {shortHash(change.commit_hash, locale)}
+          </p>
         </div>
         <div className="change-card__stats mono">
           <span className="diff-add">+{stats.additions}</span>
           <span className="diff-del">−{stats.deletions}</span>
-          <time dateTime={change.ts}>{formatDateTime(change.ts)}</time>
+          <time dateTime={change.ts}>
+            {formatDateTime(change.ts, locale)}
+          </time>
         </div>
       </header>
 
@@ -61,7 +68,10 @@ function ChangeCard({
         ))}
       </ul>
 
-      <pre className="diff" aria-label={`${change.task_id} 的代码差异`}>
+      <pre
+        className="diff"
+        aria-label={t("changes.diffAria", { task: change.task_id })}
+      >
         <code>
           {visibleLines.map((line, index) => (
             <span
@@ -82,7 +92,9 @@ function ChangeCard({
             aria-expanded={expanded}
             onClick={() => setExpanded((current) => !current)}
           >
-            {expanded ? "收起 diff" : `展开全部 ${lines.length} 行`}
+            {expanded
+              ? t("changes.collapse")
+              : t("changes.expand", { lines: lines.length })}
           </button>
         </div>
       ) : null}
@@ -91,6 +103,7 @@ function ChangeCard({
 }
 
 export function ChangesPanel() {
+  const t = useT();
   const changes = useAppStore((state) => state.changes);
   const tasks = useAppStore((state) => state.tasks);
   const loading = useAppStore((state) => state.loading);
@@ -105,16 +118,18 @@ export function ChangesPanel() {
     <section className="page">
       <header className="page-head">
         <div>
-          <p className="eyebrow">协作记录</p>
-          <h1>代码变更</h1>
+          <p className="eyebrow">{t("changes.eyebrow")}</p>
+          <h1>{t("nav.changes")}</h1>
           <p className="page-head__desc">
-            来自各任务 Worktree 的 Git diff 与提交记录。共 {changes.length} 次变更，
-            {totalFiles} 个文件。
+            {t("changes.desc", {
+              changes: changes.length,
+              files: totalFiles,
+            })}
           </p>
         </div>
         <div className="page-head__actions">
           <button type="button" className="btn btn--ghost" onClick={() => void load()}>
-            刷新变更
+            {t("changes.refresh")}
           </button>
         </div>
       </header>
@@ -125,13 +140,13 @@ export function ChangesPanel() {
 
       {loading && changes.length === 0 ? (
         <div className="panel">
-          <LoadingPanel label="正在加载代码变更" />
+          <LoadingPanel label={t("changes.loading")} />
         </div>
       ) : changes.length === 0 ? (
         <div className="panel">
           <EmptyState
-            title="还没有代码变更"
-            description="Coding Agent 写入文件并提交后，diff 与提交哈希会出现在这里。"
+            title={t("changes.emptyTitle")}
+            description={t("changes.emptyDesc")}
           />
         </div>
       ) : (

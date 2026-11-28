@@ -533,8 +533,15 @@ a:hover {
 }
 
 .auth-card {
+  position: relative;
   width: min(560px, 100%);
   padding: 24px;
+}
+
+.auth-lang {
+  position: absolute;
+  top: 16px;
+  right: 16px;
 }
 
 .auth-title {

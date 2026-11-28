@@ -2,7 +2,7 @@
 """准备一个可直接演示的完整项目（A 规划 + B 执行 + C 接口）。
 
 流程：
-1. 把 ``experiments/fixtures/shop_app`` 复制到 /tmp 并初始化 Git 仓库；
+1. 把对应语言的 fixture 复制到 /tmp 并初始化 Git 仓库；
 2. 在 SQLite 中建表（A/B/C + 整合层）；
 3. 创建项目、成员，调用 A 的 Manager Agent 生成任务；
 4. 用 B 的 MockAdapter 跑一个任务，产生会话、日志、变更；
@@ -11,8 +11,12 @@
 运行（仓库根目录）：
 
     .venv/bin/python scripts/seed_demo_project.py --reset
+    .venv/bin/python scripts/seed_demo_project.py --reset --lang en --run
 
-脚本只写 /tmp，不会修改仓库文件。
+``--lang`` 控制 fixture、需求文案、项目/成员名以及占位角色名
+（角色 A / Role A），默认中文。
+
+脚本只写 /tmp（加 ``--lang`` 不改变路径），不会修改仓库文件。
 """
 
 from __future__ import annotations
@@ -32,17 +36,36 @@ os.environ.setdefault("TEAMCODE_REQUIRE_AUTH", "0")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
-FIXTURE = ROOT / "experiments" / "fixtures" / "shop_app"
+FIXTURES = {
+    "zh": ROOT / "experiments" / "fixtures" / "shop_app",
+    "en": ROOT / "experiments" / "fixtures" / "shop_app_en",
+}
 DEFAULT_DB = Path("/tmp/teamcode-demo.db")
 DEFAULT_REPO = Path("/tmp/teamcode-demo-repo")
 DEFAULT_PROJECT_ID = "p_demo"
 
-REQUIREMENTS = (
-    "在线商城：用户管理、商品管理、订单管理、优惠券功能，"
-    "以及实时接口文档和前端控制台。"
-)
+REQUIREMENTS = {
+    "zh": (
+        "在线商城：用户管理、商品管理、订单管理、优惠券功能，"
+        "以及实时接口文档和前端控制台。"
+    ),
+    "en": """Online store demo with these modules:
+- User accounts and login
+- Product catalog and inventory
+- Discount coupons
+- Orders, cart, and payment
+- Real-time API contract docs
+- React frontend console""",
+}
+
+PROJECT_NAME = {"zh": "在线商城演示", "en": "Online Store Demo"}
+LEADER_NAME = {"zh": "演示负责人", "en": "Demo Leader"}
 
 DEMO_EMAIL = "leader@demo.invalid"
+
+
+def pick(lang: str, zh: str, en: str) -> str:
+    return en if lang == "en" else zh
 
 
 def _seed_password() -> tuple[str, bool]:
@@ -67,6 +90,21 @@ def _remove_sqlite_file(db_url: str) -> None:
         path = Path(database)
         if path.exists():
             path.unlink()
+
+
+def _remove_tree(path: Path) -> None:
+    """删除目录；Windows 上 Git 对象是只读的，先补写权限再删。"""
+    if not path.exists():
+        return
+
+    def _on_error(func, target, _exc):  # type: ignore[no-untyped-def]
+        try:
+            os.chmod(target, 0o700)
+        except OSError:
+            pass
+        func(target)
+
+    shutil.rmtree(path, onexc=_on_error)
 
 
 def _init_git_repo(repo_path: Path) -> None:
@@ -128,9 +166,8 @@ async def seed(
     project_id: str,
     *,
     run_task: bool,
+    lang: str = "zh",
 ) -> None:
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
     from app.integration.auth import Actor
     from app.integration.models import IntegrationBase
     from app.integration.schemas import (
@@ -144,6 +181,7 @@ async def seed(
     from app.interface_registry.service import InterfaceRegistryService
     from app.models import Base
     from app.models.project import Project
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     engine = create_async_engine(db_url)
     try:
@@ -159,14 +197,18 @@ async def seed(
             existing = await session.get(Project, project_id)
             if existing is not None:
                 print(
-                    f"项目 {project_id} 已存在。若要重建演示数据，请加 --reset。"
+                    pick(
+                        lang,
+                        f"项目 {project_id} 已存在。若要重建演示数据，请加 --reset。",
+                        f"Project {project_id} already exists. Add --reset to rebuild.",
+                    )
                 )
                 return
 
             password, password_from_env = _seed_password()
             registration = await service.register(
                 RegisterRequest(
-                    name="演示负责人",
+                    name=LEADER_NAME[lang],
                     email=DEMO_EMAIL,
                     password=password,
                 )
@@ -181,7 +223,7 @@ async def seed(
             await service.create_project(
                 ProjectCreateRequest(
                     project_id=project_id,
-                    name="在线商城演示",
+                    name=PROJECT_NAME[lang],
                     repo_path=str(repo_path),
                 ),
                 leader_actor,
@@ -194,9 +236,10 @@ async def seed(
             plan_result = await service.plan_project(
                 project_id,
                 RequirementsRequest(
-                    requirements=REQUIREMENTS,
+                    requirements=REQUIREMENTS[lang],
                     roles=["A", "B", "C"],
                     max_tasks=6,
+                    locale=lang,
                 ),
                 leader_actor,
             )
@@ -209,7 +252,7 @@ async def seed(
                 service = IntegrationService(session, factory)
                 started = await service.run_task(
                     first["task_id"],
-                    RunRequest(actor_id=first["owner_id"]),
+                    RunRequest(actor_id=first["owner_id"], locale=lang),
                     leader_actor,
                 )
             terminal = await _wait_terminal(factory, first["task_id"])
@@ -227,25 +270,75 @@ async def seed(
                 "files": len(changes[0]["files"]) if changes else 0,
             }
 
-        print("演示数据已准备")
-        print(f"  项目 ID：{project_id}")
+        print(pick(lang, "演示数据已准备", "Demo data is ready"))
+        print(
+            pick(
+                lang,
+                f"  项目 ID：{project_id}",
+                f"  Project ID: {project_id}",
+            )
+        )
         if password_from_env:
             print(
-                f"  队长账号：{DEMO_EMAIL}（密码来自 TEAMCODE_SEED_PASSWORD，未回显）"
+                pick(
+                    lang,
+                    f"  队长账号：{DEMO_EMAIL}（密码来自 TEAMCODE_SEED_PASSWORD，未回显）",
+                    f"  Leader account: {DEMO_EMAIL} (password from "
+                    "TEAMCODE_SEED_PASSWORD, not echoed)",
+                )
             )
         else:
-            print(f"  队长账号：{DEMO_EMAIL} / {password}")
-            print("  注意：该密码为随机生成，请首次登录后立即修改。")
-        print(f"  队长 Token：{leader_token}")
-        print(f"  仓库路径：{repo_path}")
-        print(f"  数据库：{db_url}")
-        print(f"  任务数：{len(plan_result['plan']['tasks'])}（计划 v{plan_result['version']}）")
-        print(f"  接口数：{status.total_interfaces}")
+            print(
+                pick(
+                    lang,
+                    f"  队长账号：{DEMO_EMAIL} / {password}",
+                    f"  Leader account: {DEMO_EMAIL} / {password}",
+                )
+            )
+            print(
+                pick(
+                    lang,
+                    "  注意：该密码为随机生成，请首次登录后立即修改。",
+                    "  Note: this password was generated randomly; "
+                    "change it after first login.",
+                )
+            )
+        print(
+            pick(
+                lang,
+                f"  队长 Token：{leader_token}",
+                f"  Leader token: {leader_token}",
+            )
+        )
+        print(pick(lang, f"  仓库路径：{repo_path}", f"  Repo path: {repo_path}"))
+        print(pick(lang, f"  数据库：{db_url}", f"  Database: {db_url}"))
+        print(
+            pick(
+                lang,
+                f"  任务数：{len(plan_result['plan']['tasks'])}"
+                f"（计划 v{plan_result['version']}）",
+                f"  Tasks: {len(plan_result['plan']['tasks'])} "
+                f"(plan v{plan_result['version']})",
+            )
+        )
+        print(
+            pick(
+                lang,
+                f"  接口数：{status.total_interfaces}",
+                f"  Interfaces: {status.total_interfaces}",
+            )
+        )
         if executed:
             print(
-                "  已执行任务："
-                f"{executed['task_id']} / {executed['status']} / "
-                f"日志 {executed['logs']} 条 / 文件 {executed['files']} 个"
+                pick(
+                    lang,
+                    "  已执行任务："
+                    f"{executed['task_id']} / {executed['status']} / "
+                    f"日志 {executed['logs']} 条 / 文件 {executed['files']} 个",
+                    "  Executed task: "
+                    f"{executed['task_id']} / {executed['status']} / "
+                    f"logs {executed['logs']} / files {executed['files']}",
+                )
             )
         await shutdown_runtimes()
     finally:
@@ -257,6 +350,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--project-id", default=DEFAULT_PROJECT_ID)
     parser.add_argument("--db-url", default=f"sqlite+aiosqlite:///{DEFAULT_DB}")
     parser.add_argument("--repo-path", default=str(DEFAULT_REPO))
+    parser.add_argument(
+        "--lang",
+        choices=("zh", "en"),
+        default="zh",
+        help="演示数据语言：zh 使用中文 fixture，en 使用英文 fixture",
+    )
     parser.add_argument(
         "--reset",
         action="store_true",
@@ -273,12 +372,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     repo_path = Path(args.repo_path)
+    fixture = FIXTURES[args.lang]
 
     if args.reset:
         _remove_sqlite_file(args.db_url)
-        shutil.rmtree(repo_path, ignore_errors=True)
+        _remove_tree(repo_path)
     if not repo_path.exists():
-        shutil.copytree(FIXTURE, repo_path)
+        shutil.copytree(fixture, repo_path)
         shutil.rmtree(repo_path / ".teamcode", ignore_errors=True)
     _init_git_repo(repo_path)
 
@@ -289,6 +389,7 @@ def main(argv: list[str] | None = None) -> int:
                 repo_path,
                 args.project_id,
                 run_task=args.run,
+                lang=args.lang,
             )
         )
     except Exception as exc:  # noqa: BLE001 - 演示脚本给出明确失败信息
@@ -296,15 +397,31 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print()
-    print("下一步：")
+    print(pick(args.lang, "下一步：", "Next steps:"))
     print("  cd backend")
     print(
         f'  DATABASE_URL="{args.db_url}" ../.venv/bin/python -m uvicorn '
         "app.main:app --reload --port 8000"
     )
-    print("  # 另开终端：")
+    print(pick(args.lang, "  # 另开终端：", "  # In another terminal:"))
     print("  cd frontend && npm run dev")
-    print(f"  # 浏览器打开 http://localhost:5173 ，项目 ID 填：{args.project_id}")
+    print(
+        pick(
+            args.lang,
+            f"  # 浏览器打开 http://localhost:5173 ，项目 ID 填：{args.project_id}",
+            "  # Open http://localhost:5173 and use project ID: "
+            f"{args.project_id}",
+        )
+    )
+    print(
+        pick(
+            args.lang,
+            "  # 让界面能选择 mock：后端启动时加 "
+            "TEAMCODE_AGENT=mock TEAMCODE_EXPOSE_MOCK=1",
+            "  # To select mock in the UI, start the backend with "
+            "TEAMCODE_AGENT=mock TEAMCODE_EXPOSE_MOCK=1",
+        )
+    )
     return 0
 
 
